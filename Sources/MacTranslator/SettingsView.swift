@@ -5,13 +5,15 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var settings: AppSettings
 
-    @State private var testing = false
-    @State private var testResult: String?
-    @State private var testOK = false
-
     @State private var launchAtLogin = LoginItem.isEnabled
     @State private var launchError: String?
     @State private var hostWindow: NSWindow?
+
+    // Per-backend "test connection" state, keyed by backend id.
+    @State private var testingIDs: Set<UUID> = []
+    @State private var testOutcomes: [UUID: TestOutcome] = [:]
+
+    struct TestOutcome { let ok: Bool; let message: String }
 
     var body: some View {
         Form {
@@ -27,35 +29,35 @@ struct SettingsView: View {
                         }
                     }
                 if let launchError {
-                    Text(launchError)
-                        .font(.caption)
-                        .foregroundStyle(.red)
+                    Text(launchError).font(.caption).foregroundStyle(.red)
                 }
             }
 
-            Section("AI 接口（OpenAI 兼容）") {
-                LabeledContent("Base URL") {
-                    TextField("", text: $settings.apiBaseURL, prompt: Text("https://api.openai.com/v1"))
-                        .textFieldStyle(.roundedBorder)
+            Section {
+                if settings.backends.isEmpty {
+                    Text("还没有后端，点下方「添加后端」。")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
                 }
-                LabeledContent("API Key") {
-                    SecureField("", text: $settings.apiKey, prompt: Text("sk-..."))
-                        .textFieldStyle(.roundedBorder)
+                ForEach($settings.backends) { $backend in
+                    BackendRow(
+                        backend: $backend,
+                        isTesting: testingIDs.contains(backend.id),
+                        outcome: testOutcomes[backend.id],
+                        onTest: { test(backend) },
+                        onDelete: { settings.removeBackend(backend) }
+                    )
                 }
-                LabeledContent("模型") {
-                    TextField("", text: $settings.model, prompt: Text("gpt-4o-mini"))
-                        .textFieldStyle(.roundedBorder)
+                Button {
+                    settings.addBackend()
+                } label: {
+                    Label("添加后端", systemImage: "plus.circle")
                 }
-                HStack(spacing: 10) {
-                    Button(testing ? "测试中…" : "测试连接") { test() }
-                        .disabled(testing || settings.apiKey.isEmpty)
-                    if let testResult {
-                        Label(testResult, systemImage: testOK ? "checkmark.circle.fill" : "xmark.circle.fill")
-                            .foregroundStyle(testOK ? .green : .red)
-                            .font(.callout)
-                            .lineLimit(2)
-                    }
-                }
+            } header: {
+                Text("AI 后端（OpenAI 兼容，可启用多个并行对比）")
+            } footer: {
+                Text("勾选「启用」的后端会在每次翻译时**并行**调用，浮窗里每个后端一张结果卡。Base URL 会自动拼上 /chat/completions。")
+                    .font(.caption)
             }
 
             Section("翻译") {
@@ -109,7 +111,7 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(minWidth: 460, idealWidth: 500, maxWidth: 760, minHeight: 480, idealHeight: 640, maxHeight: .infinity)
+        .frame(minWidth: 460, idealWidth: 520, maxWidth: 820, minHeight: 480, idealHeight: 680, maxHeight: .infinity)
         .background(WindowAccessor { window in
             hostWindow = window
             configureSettingsWindow(window)
@@ -117,9 +119,42 @@ struct SettingsView: View {
         .onAppear {
             launchAtLogin = LoginItem.isEnabled
             // The SwiftUI Settings scene restores its last position (often on
-            // another display). Pull it onto the screen the user is using.
-            DispatchQueue.main.async { repositionToActiveScreen() }
+            // another display). Pull it onto the screen the user is using and
+            // bring it to the front on open.
+            DispatchQueue.main.async {
+                repositionToActiveScreen()
+                bringToFront()
+            }
         }
+    }
+
+    // MARK: - Per-backend connection test
+
+    private func test(_ backend: Backend) {
+        testingIDs.insert(backend.id)
+        testOutcomes[backend.id] = nil
+        let client = OpenAIClient(baseURL: backend.baseURL, apiKey: backend.apiKey, model: backend.model)
+        Task {
+            do {
+                _ = try await client.verify()
+                testOutcomes[backend.id] = TestOutcome(ok: true, message: "连接成功")
+            } catch {
+                let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                testOutcomes[backend.id] = TestOutcome(ok: false, message: message)
+            }
+            testingIDs.remove(backend.id)
+        }
+    }
+
+    // MARK: - Window behavior
+
+    /// Brings the window to the front when it opens. It does NOT pin the window
+    /// on top — once you click another window it can be covered normally.
+    private func bringToFront() {
+        guard let window = hostWindow ?? NSApp.keyWindow else { return }
+        NSApp.activate()
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
     }
 
     /// One-time window tweaks: make it user-resizable, and let it follow the
@@ -150,27 +185,55 @@ struct SettingsView: View {
         (NSApp.delegate as? AppDelegate)?.configureTriggers()
     }
 
-    private func test() {
-        testing = true
-        testResult = nil
-        let client = OpenAIClient(baseURL: settings.apiBaseURL, apiKey: settings.apiKey, model: settings.model)
-        Task {
-            do {
-                _ = try await client.verify()
-                testOK = true
-                testResult = "连接成功"
-            } catch {
-                testOK = false
-                testResult = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-            }
-            testing = false
-        }
-    }
-
     private func openAccessibilitySettings() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
             NSWorkspace.shared.open(url)
         }
+    }
+}
+
+/// Editable row for one backend.
+private struct BackendRow: View {
+    @Binding var backend: Backend
+    var isTesting: Bool
+    var outcome: SettingsView.TestOutcome?
+    var onTest: () -> Void
+    var onDelete: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Toggle("", isOn: $backend.isEnabled)
+                    .labelsHidden()
+                    .help("启用此后端")
+                TextField("名称", text: $backend.name)
+                    .textFieldStyle(.roundedBorder)
+                Button(role: .destructive, action: onDelete) {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.borderless)
+                .help("删除此后端")
+            }
+            TextField("Base URL", text: $backend.baseURL, prompt: Text("https://api.openai.com/v1"))
+                .textFieldStyle(.roundedBorder)
+            SecureField("API Key", text: $backend.apiKey, prompt: Text("sk-...（本地服务可留空）"))
+                .textFieldStyle(.roundedBorder)
+            TextField("模型", text: $backend.model, prompt: Text("gpt-4o-mini"))
+                .textFieldStyle(.roundedBorder)
+            HStack(spacing: 8) {
+                Button(isTesting ? "测试中…" : "测试连接", action: onTest)
+                    .disabled(isTesting)
+                if let outcome {
+                    Label(outcome.message, systemImage: outcome.ok ? "checkmark.circle.fill" : "xmark.circle.fill")
+                        .foregroundStyle(outcome.ok ? .green : .red)
+                        .font(.callout)
+                        .lineLimit(2)
+                }
+                Spacer()
+            }
+        }
+        .padding(.vertical, 4)
+        .opacity(backend.isEnabled ? 1 : 0.55)
     }
 }
 

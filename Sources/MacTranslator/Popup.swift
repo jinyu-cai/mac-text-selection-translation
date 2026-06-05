@@ -24,7 +24,7 @@ final class PopupController {
 
     func show(text: String, at point: NSPoint, settings: AppSettings) {
         let panel = ensurePanel()
-        session.start(text: text, settings: settings)
+        session.start(text: text, backends: settings.enabledBackends, prompt: settings.effectiveSystemPrompt())
 
         anchorTopLeft = anchor(near: point, height: 180)
         panel.setContentSize(NSSize(width: width, height: 180))
@@ -202,13 +202,6 @@ private struct PopupView: View {
             if session.isLoading {
                 ProgressView().controlSize(.small)
             }
-            Button(action: copy) {
-                Image(systemName: "doc.on.doc")
-            }
-            .buttonStyle(.borderless)
-            .help("复制译文")
-            .disabled(session.output.isEmpty)
-
             Button(action: onClose) {
                 Image(systemName: "xmark")
             }
@@ -217,36 +210,75 @@ private struct PopupView: View {
         }
     }
 
+    @ViewBuilder
     private var content: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
-                Text(session.sourceText)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                if let error = session.errorMessage {
-                    Label(error, systemImage: "exclamationmark.triangle")
+            VStack(alignment: .leading, spacing: 12) {
+                if let notice = session.notice {
+                    Label(notice, systemImage: "exclamationmark.triangle")
                         .font(.callout)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(.orange)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
-                    Text(session.output.isEmpty ? "翻译中…" : session.output)
-                        .font(.body)
-                        .foregroundStyle(session.output.isEmpty ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
+                    Text(session.sourceText)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    ForEach(session.results) { result in
+                        ResultCard(result: result)
+                    }
                 }
             }
         }
-        .frame(maxHeight: 360)
+        .frame(maxHeight: 380)
     }
+}
 
-    private func copy() {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(session.output, forType: .string)
+/// One backend's translation result (name header + streaming text + copy).
+private struct ResultCard: View {
+    let result: TranslationSession.Result
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text(result.backendName)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                if result.isLoading {
+                    ProgressView().controlSize(.small)
+                }
+                Spacer()
+                Button {
+                    let pb = NSPasteboard.general
+                    pb.clearContents()
+                    pb.setString(result.output, forType: .string)
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .help("复制此译文")
+                .disabled(result.output.isEmpty)
+            }
+
+            if let error = result.errorMessage {
+                Text(error)
+                    .font(.callout)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text(result.output.isEmpty ? "翻译中…" : result.output)
+                    .font(.body)
+                    .foregroundStyle(result.output.isEmpty ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }
