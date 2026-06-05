@@ -8,9 +8,69 @@ final class FloatingPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
+/// Layout mode shared with the SwiftUI view. `userSize == nil` means
+/// auto-height (grow with content); a non-nil size means the user resized it,
+/// so we keep that fixed size and let content scroll.
+@MainActor
+final class PopupLayout: ObservableObject {
+    @Published var userSize: CGSize?
+}
+
+/// A real AppKit drag handle in the bottom-right corner. Handling the mouse
+/// itself (instead of a SwiftUI gesture) avoids fighting `isMovableByWindowBackground`
+/// and the click-outside dismissal, and gives a large, reliable hit area.
+final class ResizeHandleView: NSView {
+    var onResizeDelta: ((CGFloat, CGFloat) -> Void)?
+    private var lastLocation: NSPoint?
+
+    override var mouseDownCanMoveWindow: Bool { false } // resize, never move
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: Self.diagonalResizeCursor)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        lastLocation = NSEvent.mouseLocation
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let last = lastLocation else { return }
+        let now = NSEvent.mouseLocation
+        onResizeDelta?(now.x - last.x, now.y - last.y) // screen coords (y up)
+        lastLocation = now
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        lastLocation = nil
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.secondaryLabelColor.withAlphaComponent(0.65).setStroke()
+        let path = NSBezierPath()
+        path.lineWidth = 1.3
+        for i in 0..<3 {
+            let off = CGFloat(i) * 4.5 + 5
+            path.move(to: NSPoint(x: bounds.maxX - off, y: bounds.minY + 4))
+            path.line(to: NSPoint(x: bounds.maxX - 4, y: bounds.minY + off))
+        }
+        path.stroke()
+    }
+
+    /// The system diagonal resize cursor (private), falling back to crosshair.
+    static let diagonalResizeCursor: NSCursor = {
+        let sel = NSSelectorFromString("_windowResizeNorthWestSouthEastCursor")
+        if NSCursor.responds(to: sel),
+           let value = NSCursor.perform(sel)?.takeUnretainedValue() as? NSCursor {
+            return value
+        }
+        return .crosshair
+    }()
+}
+
 @MainActor
 final class PopupController {
     private let session = TranslationSession()
+    private let layout = PopupLayout()
     private var panel: FloatingPanel?
     private var anchorTopLeft: NSPoint = .zero
 
@@ -19,28 +79,38 @@ final class PopupController {
     private var moveObserver: NSObjectProtocol?
     private var isAdjusting = false
 
-    private let width: CGFloat = 360
-    private let maxHeight: CGFloat = 460
+    private let defaultWidth: CGFloat = 360
+    private let autoMaxHeight: CGFloat = 460
+    private let minSize = CGSize(width: 300, height: 140)
+    private let maxSize = CGSize(width: 900, height: 1000)
+    private let handleSize: CGFloat = 24
+
+    init() {
+        let d = UserDefaults.standard
+        let w = d.double(forKey: "popupWidth")
+        let h = d.double(forKey: "popupHeight")
+        if w > 0, h > 0 { layout.userSize = CGSize(width: w, height: h) }
+    }
 
     func show(text: String, at point: NSPoint, settings: AppSettings) {
         let panel = ensurePanel()
         session.start(text: text, backends: settings.enabledBackends, prompt: settings.effectiveSystemPrompt())
-
-        anchorTopLeft = anchor(near: point, height: 180)
-        panel.setContentSize(NSSize(width: width, height: 180))
-        panel.setFrameTopLeftPoint(anchorTopLeft)
-        panel.orderFrontRegardless()
-        installDismissMonitors()
+        present(panel, at: point, initialHeight: 180)
     }
 
-    /// Shows a one-off notice (e.g. a permission hint) instead of a translation.
     func showNotice(_ message: String, at point: NSPoint) {
         let panel = ensurePanel()
         session.presentNotice(message)
+        present(panel, at: point, initialHeight: 140)
+    }
 
-        anchorTopLeft = anchor(near: point, height: 140)
-        panel.setContentSize(NSSize(width: width, height: 140))
+    private func present(_ panel: FloatingPanel, at point: NSPoint, initialHeight: CGFloat) {
+        let size = layout.userSize ?? CGSize(width: defaultWidth, height: initialHeight)
+        anchorTopLeft = anchor(near: point, height: size.height)
+        isAdjusting = true
+        panel.setContentSize(size)
         panel.setFrameTopLeftPoint(anchorTopLeft)
+        isAdjusting = false
         panel.orderFrontRegardless()
         installDismissMonitors()
     }
@@ -61,7 +131,7 @@ final class PopupController {
         if let panel { return panel }
 
         let panel = FloatingPanel(
-            contentRect: NSRect(x: 0, y: 0, width: width, height: 180),
+            contentRect: NSRect(x: 0, y: 0, width: defaultWidth, height: 180),
             styleMask: [.nonactivatingPanel, .borderless, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -75,10 +145,8 @@ final class PopupController {
         panel.hasShadow = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.animationBehavior = .utilityWindow
-        panel.isMovableByWindowBackground = true // drag the popup by its background/header
+        panel.isMovableByWindowBackground = true // drag the card background to move
 
-        // When the user drags the popup, remember the new position so that
-        // streaming height updates grow downward from there instead of snapping back.
         moveObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didMoveNotification,
             object: panel,
@@ -90,42 +158,78 @@ final class PopupController {
             }
         }
 
+        // Container hosts the SwiftUI content + an AppKit resize handle on top.
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: defaultWidth, height: 180))
+        container.autoresizesSubviews = true
+
         let root = PopupView(
             session: session,
+            layout: layout,
             onClose: { [weak self] in self?.close() },
             onHeightChange: { [weak self] height in self?.updateHeight(height) }
         )
         let hosting = NSHostingView(rootView: root)
+        hosting.frame = container.bounds
         hosting.autoresizingMask = [.width, .height]
-        panel.contentView = hosting
+        container.addSubview(hosting)
 
+        let handle = ResizeHandleView(frame: NSRect(
+            x: container.bounds.width - handleSize,
+            y: 0,
+            width: handleSize,
+            height: handleSize
+        ))
+        handle.autoresizingMask = [.minXMargin, .maxYMargin] // stay bottom-right
+        handle.onResizeDelta = { [weak self] dx, dy in self?.resizeBy(dx: dx, dy: dy) }
+        container.addSubview(handle)
+
+        panel.contentView = container
         self.panel = panel
         return panel
     }
 
-    /// Grows the panel downward as streamed text arrives, keeping the top edge
-    /// pinned to where it first appeared.
+    /// Auto-grows the panel as streamed text arrives — only while the user has
+    /// not manually resized it.
     private func updateHeight(_ contentHeight: CGFloat) {
-        guard let panel else { return }
-        let clamped = max(110, min(contentHeight, maxHeight))
+        guard let panel, layout.userSize == nil else { return }
+        let clamped = max(110, min(contentHeight, autoMaxHeight))
         isAdjusting = true
-        panel.setContentSize(NSSize(width: width, height: clamped))
+        panel.setContentSize(NSSize(width: defaultWidth, height: clamped))
         panel.setFrameTopLeftPoint(anchorTopLeft)
         isAdjusting = false
     }
 
-    /// Returns the top-left corner (Cocoa screen coords) for a popup placed
-    /// just below-right of `point`, flipped above the cursor when there is no
-    /// room below, and clamped to the visible screen.
+    /// Incremental resize from the drag handle (top-left pinned). `dy` is in
+    /// screen coords (y up), so dragging down (dy < 0) makes it taller.
+    private func resizeBy(dx: CGFloat, dy: CGFloat) {
+        guard let panel else { return }
+        let current = panel.contentView?.frame.size ?? panel.frame.size
+        let w = min(max(current.width + dx, minSize.width), maxSize.width)
+        let h = min(max(current.height - dy, minSize.height), maxSize.height)
+        let size = CGSize(width: w, height: h)
+        layout.userSize = size
+
+        isAdjusting = true
+        panel.setContentSize(size)
+        panel.setFrameTopLeftPoint(anchorTopLeft)
+        isAdjusting = false
+
+        UserDefaults.standard.set(w, forKey: "popupWidth")
+        UserDefaults.standard.set(h, forKey: "popupHeight")
+    }
+
+    /// Top-left corner for a popup placed below-right of `point`, flipped above
+    /// when there is no room below, clamped to the visible screen.
     private func anchor(near point: NSPoint, height: CGFloat) -> NSPoint {
+        let w = layout.userSize?.width ?? defaultWidth
         var x = point.x + 12
         var topY = point.y - 12
 
         let screen = NSScreen.screens.first { $0.frame.contains(point) } ?? NSScreen.main
         if let visible = screen?.visibleFrame {
-            if x + width > visible.maxX { x = visible.maxX - width - 8 }
+            if x + w > visible.maxX { x = visible.maxX - w - 8 }
             if x < visible.minX { x = visible.minX + 8 }
-            if topY - height < visible.minY { topY = point.y + height + 12 } // flip above
+            if topY - height < visible.minY { topY = point.y + height + 12 }
             if topY > visible.maxY { topY = visible.maxY - 8 }
         }
         return NSPoint(x: x, y: topY)
@@ -136,11 +240,9 @@ final class PopupController {
     private func installDismissMonitors() {
         removeDismissMonitors()
 
-        // Clicks in other apps close the popup.
         globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
             self?.close()
         }
-        // Esc closes it; clicks outside the panel close it.
         localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] event in
             guard let self, let panel = self.panel else { return event }
             if event.type == .keyDown {
@@ -150,7 +252,11 @@ final class PopupController {
                 }
                 return event
             }
-            if !panel.frame.contains(NSEvent.mouseLocation) {
+            // Only dismiss on a click clearly outside the panel (small grace margin
+            // so clicks near the edge / resize handle don't accidentally close it).
+            let margin: CGFloat = 6
+            let area = panel.frame.insetBy(dx: -margin, dy: -margin)
+            if !area.contains(NSEvent.mouseLocation) {
                 self.close()
             }
             return event
@@ -165,8 +271,11 @@ final class PopupController {
 
 private struct PopupView: View {
     @ObservedObject var session: TranslationSession
+    @ObservedObject var layout: PopupLayout
     var onClose: () -> Void
     var onHeightChange: (CGFloat) -> Void
+
+    private var isUserSized: Bool { layout.userSize != nil }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -175,7 +284,7 @@ private struct PopupView: View {
             content
         }
         .padding(14)
-        .frame(width: 360, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: isUserSized ? .infinity : nil, alignment: .topLeading)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -185,7 +294,7 @@ private struct PopupView: View {
             GeometryReader { proxy in
                 Color.clear
                     .onChange(of: proxy.size.height, initial: true) { _, newValue in
-                        onHeightChange(newValue)
+                        if !isUserSized { onHeightChange(newValue) }
                     }
             }
         )
@@ -231,8 +340,10 @@ private struct PopupView: View {
                     }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.bottom, 14) // keep content clear of the resize handle
         }
-        .frame(maxHeight: 380)
+        .frame(maxHeight: isUserSized ? .infinity : 380)
     }
 }
 
