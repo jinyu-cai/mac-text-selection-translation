@@ -7,9 +7,9 @@ final class AppSettings: ObservableObject {
 
     private let defaults = UserDefaults.standard
 
-    @Published var apiBaseURL: String { didSet { defaults.set(apiBaseURL, forKey: Keys.apiBaseURL) } }
-    @Published var apiKey: String { didSet { defaults.set(apiKey, forKey: Keys.apiKey) } }
-    @Published var model: String { didSet { defaults.set(model, forKey: Keys.model) } }
+    /// All configured AI backends. Each enabled one runs on every translation.
+    @Published var backends: [Backend] { didSet { saveBackends() } }
+
     @Published var targetLanguage: String { didSet { defaults.set(targetLanguage, forKey: Keys.targetLanguage) } }
     @Published var customPrompt: String { didSet { defaults.set(customPrompt, forKey: Keys.customPrompt) } }
     @Published var enableHotkey: Bool { didSet { defaults.set(enableHotkey, forKey: Keys.enableHotkey) } }
@@ -20,8 +20,6 @@ final class AppSettings: ObservableObject {
 
     private init() {
         defaults.register(defaults: [
-            Keys.apiBaseURL: "https://api.openai.com/v1",
-            Keys.model: "gpt-4o-mini",
             Keys.targetLanguage: "中文",
             Keys.enableHotkey: true,
             Keys.enableFloatingIcon: true,
@@ -30,9 +28,6 @@ final class AppSettings: ObservableObject {
             Keys.hotkeyModifiers: Int(NSEvent.ModifierFlags.option.rawValue),
         ])
 
-        apiBaseURL = defaults.string(forKey: Keys.apiBaseURL) ?? "https://api.openai.com/v1"
-        apiKey = defaults.string(forKey: Keys.apiKey) ?? ""
-        model = defaults.string(forKey: Keys.model) ?? "gpt-4o-mini"
         targetLanguage = defaults.string(forKey: Keys.targetLanguage) ?? "中文"
         customPrompt = defaults.string(forKey: Keys.customPrompt) ?? ""
         enableHotkey = defaults.bool(forKey: Keys.enableHotkey)
@@ -40,7 +35,47 @@ final class AppSettings: ObservableObject {
         restoreClipboard = defaults.bool(forKey: Keys.restoreClipboard)
         hotkeyKeyCode = defaults.integer(forKey: Keys.hotkeyKeyCode)
         hotkeyModifiers = defaults.integer(forKey: Keys.hotkeyModifiers)
+
+        backends = Self.loadBackends(from: defaults)
+        // Persist the migrated/default set so it survives even without edits.
+        if defaults.data(forKey: Keys.backends) == nil {
+            saveBackends()
+        }
     }
+
+    // MARK: - Backends
+
+    /// Backends that will actually be called on a translation.
+    var enabledBackends: [Backend] { backends.filter { $0.isUsable } }
+
+    func addBackend() {
+        backends.append(.makeNew())
+    }
+
+    func removeBackend(_ backend: Backend) {
+        backends.removeAll { $0.id == backend.id }
+    }
+
+    private func saveBackends() {
+        if let data = try? JSONEncoder().encode(backends) {
+            defaults.set(data, forKey: Keys.backends)
+        }
+    }
+
+    /// Loads backends from JSON, or migrates the old single-backend config.
+    private static func loadBackends(from defaults: UserDefaults) -> [Backend] {
+        if let data = defaults.data(forKey: Keys.backends),
+           let decoded = try? JSONDecoder().decode([Backend].self, from: data) {
+            return decoded
+        }
+        // Migration: turn the old single apiBaseURL/apiKey/model into one backend.
+        let url = defaults.string(forKey: "apiBaseURL") ?? "https://api.openai.com/v1"
+        let key = defaults.string(forKey: "apiKey") ?? ""
+        let model = defaults.string(forKey: "model") ?? "gpt-4o-mini"
+        return [Backend(name: "OpenAI", baseURL: url, apiKey: key, model: model, isEnabled: true)]
+    }
+
+    // MARK: - Derived values
 
     /// The stored Cocoa modifier flags translated into Carbon modifier bits.
     var hotkeyCarbonModifiers: UInt32 {
@@ -71,9 +106,7 @@ final class AppSettings: ObservableObject {
     }
 
     private enum Keys {
-        static let apiBaseURL = "apiBaseURL"
-        static let apiKey = "apiKey"
-        static let model = "model"
+        static let backends = "backends"
         static let targetLanguage = "targetLanguage"
         static let customPrompt = "customPrompt"
         static let enableHotkey = "enableHotkey"

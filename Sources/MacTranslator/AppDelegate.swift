@@ -76,6 +76,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 popup.showNotice("没有取到选中的文字。\n请先选中文本，或确认该应用允许复制（⌘C）。", at: point)
                 return
             }
+            guard !settings.enabledBackends.isEmpty else {
+                popup.showNotice("还没有启用任何 AI 后端。\n请在 设置 → AI 后端 里添加并启用至少一个。", at: point)
+                return
+            }
             popup.show(text: text, at: point, settings: settings)
         }
     }
@@ -85,6 +89,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let text = NSPasteboard.general.string(forType: .string)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !text.isEmpty else { return }
+        guard !settings.enabledBackends.isEmpty else {
+            popup.showNotice("还没有启用任何 AI 后端。\n请在 设置 → AI 后端 里添加并启用至少一个。", at: NSEvent.mouseLocation)
+            return
+        }
         popup.show(text: text, at: NSEvent.mouseLocation, settings: settings)
     }
 
