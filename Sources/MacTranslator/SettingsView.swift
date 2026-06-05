@@ -9,8 +9,29 @@ struct SettingsView: View {
     @State private var testResult: String?
     @State private var testOK = false
 
+    @State private var launchAtLogin = LoginItem.isEnabled
+    @State private var launchError: String?
+
     var body: some View {
         Form {
+            Section("通用") {
+                Toggle("开机时自动启动", isOn: $launchAtLogin)
+                    .onChange(of: launchAtLogin) { _, newValue in
+                        do {
+                            try LoginItem.setEnabled(newValue)
+                            launchError = nil
+                        } catch {
+                            launchError = error.localizedDescription
+                            launchAtLogin = LoginItem.isEnabled // revert to real state
+                        }
+                    }
+                if let launchError {
+                    Text(launchError)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
+
             Section("AI 接口（OpenAI 兼容）") {
                 LabeledContent("Base URL") {
                     TextField("", text: $settings.apiBaseURL, prompt: Text("https://api.openai.com/v1"))
@@ -89,6 +110,7 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .frame(width: 460)
         .fixedSize(horizontal: false, vertical: true)
+        .onAppear { launchAtLogin = LoginItem.isEnabled }
     }
 
     private var accessibilityTrusted: Bool { AXIsProcessTrusted() }
