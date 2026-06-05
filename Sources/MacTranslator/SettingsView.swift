@@ -11,6 +11,7 @@ struct SettingsView: View {
 
     @State private var launchAtLogin = LoginItem.isEnabled
     @State private var launchError: String?
+    @State private var hostWindow: NSWindow?
 
     var body: some View {
         Form {
@@ -108,9 +109,39 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 460)
-        .fixedSize(horizontal: false, vertical: true)
-        .onAppear { launchAtLogin = LoginItem.isEnabled }
+        .frame(minWidth: 460, idealWidth: 500, maxWidth: 760, minHeight: 480, idealHeight: 640, maxHeight: .infinity)
+        .background(WindowAccessor { window in
+            hostWindow = window
+            configureSettingsWindow(window)
+        })
+        .onAppear {
+            launchAtLogin = LoginItem.isEnabled
+            // The SwiftUI Settings scene restores its last position (often on
+            // another display). Pull it onto the screen the user is using.
+            DispatchQueue.main.async { repositionToActiveScreen() }
+        }
+    }
+
+    /// One-time window tweaks: make it user-resizable, and let it follow the
+    /// user to whichever Desktop/Space is active instead of yanking them away.
+    private func configureSettingsWindow(_ window: NSWindow) {
+        window.styleMask.insert(.resizable)
+        window.collectionBehavior.insert(.moveToActiveSpace)
+    }
+
+    /// Moves the settings window to the screen under the cursor (centered),
+    /// but only if it isn't already there — so a position the user chose is kept.
+    private func repositionToActiveScreen() {
+        guard let window = hostWindow ?? NSApp.keyWindow,
+              let screen = NSScreen.screens.first(where: { $0.frame.contains(NSEvent.mouseLocation) }) ?? NSScreen.main
+        else { return }
+        if window.screen === screen { return }
+
+        let visible = screen.visibleFrame
+        var frame = window.frame
+        frame.origin.x = (visible.minX + visible.maxX - frame.width) / 2
+        frame.origin.y = (visible.minY + visible.maxY - frame.height) / 2
+        window.setFrame(frame, display: true)
     }
 
     private var accessibilityTrusted: Bool { AXIsProcessTrusted() }
@@ -189,4 +220,19 @@ private struct ShortcutRecorder: View {
             self.monitor = nil
         }
     }
+}
+
+/// Hands back the `NSWindow` hosting this SwiftUI view, once it is attached.
+private struct WindowAccessor: NSViewRepresentable {
+    var onResolve: (NSWindow) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        DispatchQueue.main.async { [weak view] in
+            if let window = view?.window { onResolve(window) }
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
 }

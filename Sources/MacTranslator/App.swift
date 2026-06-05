@@ -15,6 +15,7 @@ struct MacTranslatorApp: App {
             SettingsView()
                 .environmentObject(settings)
         }
+        .windowResizability(.contentMinSize)
     }
 }
 
