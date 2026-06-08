@@ -94,7 +94,13 @@ final class PopupController {
 
     func show(text: String, at point: NSPoint, settings: AppSettings) {
         let panel = ensurePanel()
-        session.start(text: text, backends: settings.enabledBackends, prompt: settings.effectiveSystemPrompt())
+        session.start(
+            text: text,
+            backends: settings.enabledBackends,
+            prompt: settings.effectiveSystemPrompt(),
+            dictionary: settings.microsoftDictionaryConfig,
+            translationSpeechLanguage: settings.targetSpeechLanguageCode
+        )
         present(panel, at: point, initialHeight: 180)
     }
 
@@ -304,7 +310,7 @@ private struct PopupView: View {
         HStack(spacing: 8) {
             Image(systemName: "character.bubble")
                 .foregroundStyle(.secondary)
-            Text("翻译")
+            Text(title)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
             Spacer()
@@ -319,6 +325,12 @@ private struct PopupView: View {
         }
     }
 
+    private var title: String {
+        if session.results.isEmpty, session.showsDictionary { return "词典" }
+        if session.showsDictionary { return "翻译 / 词典" }
+        return "翻译"
+    }
+
     @ViewBuilder
     private var content: some View {
         ScrollView {
@@ -329,14 +341,33 @@ private struct PopupView: View {
                         .foregroundStyle(.orange)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
-                    Text(session.sourceText)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(alignment: .top, spacing: 8) {
+                        Text(session.sourceText)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        SpeakButton(
+                            text: session.sourceText,
+                            languageCode: session.sourceSpeechLanguage,
+                            help: "朗读原文"
+                        )
+                    }
+
+                    if session.showsDictionary {
+                        DictionaryCard(
+                            sourceText: session.sourceText,
+                            lookup: session.dictionaryLookup,
+                            isLoading: session.isDictionaryLoading,
+                            errorMessage: session.dictionaryErrorMessage,
+                            sourceLanguageCode: session.sourceSpeechLanguage,
+                            targetLanguageCode: session.targetSpeechLanguage
+                        )
+                    }
 
                     ForEach(session.results) { result in
-                        ResultCard(result: result)
+                        ResultCard(result: result, languageCode: session.translationSpeechLanguage)
                     }
                 }
             }
@@ -350,6 +381,7 @@ private struct PopupView: View {
 /// One backend's translation result (name header + streaming text + copy).
 private struct ResultCard: View {
     let result: TranslationSession.Result
+    let languageCode: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -361,6 +393,12 @@ private struct ResultCard: View {
                     ProgressView().controlSize(.small)
                 }
                 Spacer()
+                SpeakButton(
+                    text: result.output,
+                    languageCode: languageCode,
+                    help: "朗读此译文"
+                )
+                .disabled(result.output.isEmpty)
                 Button {
                     let pb = NSPasteboard.general
                     pb.clearContents()
@@ -391,5 +429,118 @@ private struct ResultCard: View {
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+}
+
+private struct DictionaryCard: View {
+    let sourceText: String
+    let lookup: MicrosoftDictionaryLookup?
+    let isLoading: Bool
+    let errorMessage: String?
+    let sourceLanguageCode: String?
+    let targetLanguageCode: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text("微软词典")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                if isLoading {
+                    ProgressView().controlSize(.small)
+                }
+                Spacer()
+                SpeakButton(
+                    text: lookup?.displaySource ?? sourceText,
+                    languageCode: sourceLanguageCode,
+                    help: "朗读词条"
+                )
+            }
+
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.callout)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if let lookup {
+                if lookup.translations.isEmpty {
+                    Text("未找到词典结果。")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                } else {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(Array(lookup.translations.prefix(6))) { translation in
+                            DictionaryTranslationRow(
+                                translation: translation,
+                                targetLanguageCode: targetLanguageCode
+                            )
+                        }
+                    }
+                }
+            } else {
+                Text("查询中…")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+}
+
+private struct DictionaryTranslationRow: View {
+    let translation: MicrosoftDictionaryTranslation
+    let targetLanguageCode: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(translation.posLabel)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(Color.primary.opacity(0.06), in: Capsule())
+                Text(translation.displayText)
+                    .font(.body.weight(.medium))
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 6)
+                Text("\(Int((translation.confidence * 100).rounded()))%")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                SpeakButton(
+                    text: translation.displayText,
+                    languageCode: targetLanguageCode,
+                    help: "朗读译词"
+                )
+            }
+
+            if !translation.backTranslations.isEmpty {
+                Text("回译：" + translation.backTranslations.prefix(4).map(\.displayText).joined(separator: "、"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+        }
+    }
+}
+
+private struct SpeakButton: View {
+    let text: String
+    let languageCode: String?
+    let help: String
+
+    var body: some View {
+        Button {
+            PronunciationSpeaker.shared.speak(text, language: languageCode)
+        } label: {
+            Image(systemName: "speaker.wave.2")
+        }
+        .buttonStyle(.borderless)
+        .controlSize(.small)
+        .help(help)
+        .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 }

@@ -9,7 +9,9 @@ final class FloatingIconController {
 
     private var panel: NSPanel?
     private var anchorPoint: NSPoint = .zero
+    private var autoHideTask: Task<Void, Never>?
     private let size = NSSize(width: 28, height: 28)
+    private let autoHideDelay: UInt64 = 10_000_000_000
 
     func show(at point: NSPoint) {
         anchorPoint = point
@@ -23,9 +25,30 @@ final class FloatingIconController {
         }
         panel.setFrame(NSRect(origin: origin, size: size), display: true)
         panel.orderFrontRegardless()
+        scheduleAutoHide()
     }
 
     func hide() {
+        autoHideTask?.cancel()
+        autoHideTask = nil
+        panel?.orderOut(nil)
+    }
+
+    private func scheduleAutoHide() {
+        autoHideTask?.cancel()
+        let delay = autoHideDelay
+        autoHideTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: delay)
+            } catch {
+                return
+            }
+            self?.hideFromTimeout()
+        }
+    }
+
+    private func hideFromTimeout() {
+        autoHideTask = nil
         panel?.orderOut(nil)
     }
 
@@ -56,6 +79,10 @@ final class FloatingIconController {
 
         self.panel = panel
         return panel
+    }
+
+    deinit {
+        autoHideTask?.cancel()
     }
 }
 

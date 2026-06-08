@@ -12,6 +12,8 @@ struct SettingsView: View {
     // Per-backend "test connection" state, keyed by backend id.
     @State private var testingIDs: Set<UUID> = []
     @State private var testOutcomes: [UUID: TestOutcome] = [:]
+    @State private var dictionaryTesting = false
+    @State private var dictionaryTestOutcome: TestOutcome?
 
     struct TestOutcome { let ok: Bool; let message: String }
 
@@ -57,6 +59,51 @@ struct SettingsView: View {
                 Text("AI 后端（OpenAI 兼容，可启用多个并行对比）")
             } footer: {
                 Text("勾选「启用」的后端会在每次翻译时**并行**调用，浮窗里每个后端一张结果卡。Base URL 会自动拼上 /chat/completions。")
+                    .font(.caption)
+            }
+
+            Section {
+                Toggle("启用微软词典", isOn: $settings.enableMicrosoftDictionary)
+
+                if settings.enableMicrosoftDictionary {
+                    TextField("Endpoint", text: $settings.microsoftTranslatorEndpoint, prompt: Text("https://api.cognitive.microsofttranslator.com"))
+                        .textFieldStyle(.roundedBorder)
+                    SecureField("Translator Key", text: $settings.microsoftTranslatorKey)
+                        .textFieldStyle(.roundedBorder)
+                    TextField("Region", text: $settings.microsoftTranslatorRegion, prompt: Text("eastus / global 资源可按需留空"))
+                        .textFieldStyle(.roundedBorder)
+                    HStack(spacing: 8) {
+                        TextField("源语言", text: $settings.microsoftDictionaryFromLanguage, prompt: Text("en"))
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 88)
+                        Image(systemName: "arrow.right")
+                            .foregroundStyle(.secondary)
+                        TextField("目标语言", text: $settings.microsoftDictionaryToLanguage, prompt: Text("zh-Hans"))
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 108)
+                        Spacer()
+                    }
+                    HStack(spacing: 8) {
+                        Button(dictionaryTesting ? "测试中…" : "测试词典") {
+                            testDictionary()
+                        }
+                        .disabled(dictionaryTesting)
+                        if let dictionaryTestOutcome {
+                            Label(
+                                dictionaryTestOutcome.message,
+                                systemImage: dictionaryTestOutcome.ok ? "checkmark.circle.fill" : "xmark.circle.fill"
+                            )
+                            .foregroundStyle(dictionaryTestOutcome.ok ? .green : .red)
+                            .font(.callout)
+                            .lineLimit(2)
+                        }
+                        Spacer()
+                    }
+                }
+            } header: {
+                Text("微软词典与读音")
+            } footer: {
+                Text("词典使用 Azure AI Translator Dictionary Lookup。读音按钮使用 macOS 本机语音，并按语言代码选择声音。")
                     .font(.caption)
             }
 
@@ -133,7 +180,7 @@ struct SettingsView: View {
     private func test(_ backend: Backend) {
         testingIDs.insert(backend.id)
         testOutcomes[backend.id] = nil
-        let client = OpenAIClient(baseURL: backend.baseURL, apiKey: backend.apiKey, model: backend.model)
+        let client = OpenAIClient(baseURL: backend.baseURL, apiKey: backend.apiKey, model: backend.model, reasoning: backend.reasoning)
         Task {
             do {
                 _ = try await client.verify()
@@ -144,6 +191,44 @@ struct SettingsView: View {
             }
             testingIDs.remove(backend.id)
         }
+    }
+
+    private func testDictionary() {
+        dictionaryTesting = true
+        dictionaryTestOutcome = nil
+        let config = settings.microsoftDictionaryConfig
+        let term = Self.sampleTerm(for: config.fromLanguage)
+        let client = MicrosoftDictionaryClient(
+            endpoint: config.endpoint,
+            apiKey: config.apiKey,
+            region: config.region
+        )
+        Task {
+            do {
+                let lookup = try await client.lookup(text: term, from: config.fromLanguage, to: config.toLanguage)
+                let count = lookup.translations.count
+                let message = count == 0 ? "连接成功，但未查到 \(term)" : "连接成功，返回 \(count) 个词条"
+                dictionaryTestOutcome = TestOutcome(ok: true, message: message)
+            } catch {
+                let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                dictionaryTestOutcome = TestOutcome(ok: false, message: message)
+            }
+            dictionaryTesting = false
+        }
+    }
+
+    private static func sampleTerm(for language: String) -> String {
+        let code = language
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "_", with: "-")
+            .lowercased()
+        if code.hasPrefix("zh") { return "你好" }
+        if code.hasPrefix("ja") { return "猫" }
+        if code.hasPrefix("ko") { return "안녕" }
+        if code.hasPrefix("fr") { return "bonjour" }
+        if code.hasPrefix("de") { return "hallo" }
+        if code.hasPrefix("es") { return "hola" }
+        return "hello"
     }
 
     // MARK: - Window behavior
@@ -220,6 +305,20 @@ private struct BackendRow: View {
                 .textFieldStyle(.roundedBorder)
             TextField("模型", text: $backend.model, prompt: Text("gpt-4o-mini"))
                 .textFieldStyle(.roundedBorder)
+            HStack(spacing: 8) {
+                Text("思考能力")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                Picker("", selection: $backend.reasoning) {
+                    ForEach(ReasoningMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .fixedSize()
+                Spacer()
+            }
             HStack(spacing: 8) {
                 Button(isTesting ? "测试中…" : "测试连接", action: onTest)
                     .disabled(isTesting)

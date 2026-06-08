@@ -34,6 +34,7 @@ struct OpenAIClient {
     var baseURL: String
     var apiKey: String
     var model: String
+    var reasoning: ReasoningMode = .auto
 
     private func endpoint() throws -> URL {
         var trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -52,7 +53,7 @@ struct OpenAIClient {
         if !apiKey.isEmpty {
             request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         }
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "model": model,
             "stream": stream,
             "temperature": 0.2,
@@ -61,6 +62,15 @@ struct OpenAIClient {
                 ["role": "user", "content": text],
             ],
         ]
+        // OpenRouter's unified reasoning control. `.auto` sends nothing so
+        // backends that don't understand it are unaffected.
+        switch reasoning {
+        case .auto: break
+        case .off: body["reasoning"] = ["enabled": false]
+        case .low: body["reasoning"] = ["effort": "low"]
+        case .medium: body["reasoning"] = ["effort": "medium"]
+        case .high: body["reasoning"] = ["effort": "high"]
+        }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         return request
     }

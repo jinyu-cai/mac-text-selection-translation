@@ -11,6 +11,8 @@
   - 选中浮标：拖选或双击文字后，旁边浮出一个小按钮，点它翻译。
 - **流式输出**：译文逐字显示。
 - **自动语向**：默认翻译成中文；如果原文已经是中文，则翻译成英文（目标语言可改）。
+- **微软词典**：可选接入 Azure AI Translator Dictionary Lookup，显示词性、候选译词、置信度和回译上下文。
+- **读音**：原文、微软词典译词和 AI 译文都可一键朗读（使用 macOS 本机语音）。
 - **自定义提示词**：可用自己的 system prompt 完全覆盖默认翻译指令。
 - **取词后恢复剪贴板**：默认开启，不污染你的剪贴板。
 - **开机自启动**：设置 → 通用里可开关（基于 `SMAppService`），开启后随登录自动在菜单栏待命。
@@ -57,6 +59,7 @@ make clean
 | Base URL | 接口前缀，会自动拼上 `/chat/completions`。如 `https://api.openai.com/v1`、`http://localhost:11434/v1`（Ollama） |
 | API Key | `Bearer` 鉴权；本地服务可留空 |
 | 模型 | 如 `gpt-4o-mini`、`deepseek-chat`、`qwen2.5:7b` |
+| 微软词典 | 开启后填写 Translator Endpoint / Key / Region，以及源语言和目标语言代码（默认 `en` → `zh-Hans`） |
 | 目标语言 | 默认「中文」 |
 | 自定义提示词 | 留空用内置提示；填了则完全覆盖 |
 | 快捷键 | 点一下开始录制，按下组合键即可 |

@@ -15,6 +15,12 @@ final class AppSettings: ObservableObject {
     @Published var enableHotkey: Bool { didSet { defaults.set(enableHotkey, forKey: Keys.enableHotkey) } }
     @Published var enableFloatingIcon: Bool { didSet { defaults.set(enableFloatingIcon, forKey: Keys.enableFloatingIcon) } }
     @Published var restoreClipboard: Bool { didSet { defaults.set(restoreClipboard, forKey: Keys.restoreClipboard) } }
+    @Published var enableMicrosoftDictionary: Bool { didSet { defaults.set(enableMicrosoftDictionary, forKey: Keys.enableMicrosoftDictionary) } }
+    @Published var microsoftTranslatorEndpoint: String { didSet { defaults.set(microsoftTranslatorEndpoint, forKey: Keys.microsoftTranslatorEndpoint) } }
+    @Published var microsoftTranslatorKey: String { didSet { defaults.set(microsoftTranslatorKey, forKey: Keys.microsoftTranslatorKey) } }
+    @Published var microsoftTranslatorRegion: String { didSet { defaults.set(microsoftTranslatorRegion, forKey: Keys.microsoftTranslatorRegion) } }
+    @Published var microsoftDictionaryFromLanguage: String { didSet { defaults.set(microsoftDictionaryFromLanguage, forKey: Keys.microsoftDictionaryFromLanguage) } }
+    @Published var microsoftDictionaryToLanguage: String { didSet { defaults.set(microsoftDictionaryToLanguage, forKey: Keys.microsoftDictionaryToLanguage) } }
     @Published var hotkeyKeyCode: Int { didSet { defaults.set(hotkeyKeyCode, forKey: Keys.hotkeyKeyCode) } }
     @Published var hotkeyModifiers: Int { didSet { defaults.set(hotkeyModifiers, forKey: Keys.hotkeyModifiers) } }
 
@@ -24,6 +30,10 @@ final class AppSettings: ObservableObject {
             Keys.enableHotkey: true,
             Keys.enableFloatingIcon: true,
             Keys.restoreClipboard: true,
+            Keys.enableMicrosoftDictionary: false,
+            Keys.microsoftTranslatorEndpoint: "https://api.cognitive.microsofttranslator.com",
+            Keys.microsoftDictionaryFromLanguage: "en",
+            Keys.microsoftDictionaryToLanguage: "zh-Hans",
             Keys.hotkeyKeyCode: kVK_ANSI_D,
             Keys.hotkeyModifiers: Int(NSEvent.ModifierFlags.option.rawValue),
         ])
@@ -33,6 +43,12 @@ final class AppSettings: ObservableObject {
         enableHotkey = defaults.bool(forKey: Keys.enableHotkey)
         enableFloatingIcon = defaults.bool(forKey: Keys.enableFloatingIcon)
         restoreClipboard = defaults.bool(forKey: Keys.restoreClipboard)
+        enableMicrosoftDictionary = defaults.bool(forKey: Keys.enableMicrosoftDictionary)
+        microsoftTranslatorEndpoint = defaults.string(forKey: Keys.microsoftTranslatorEndpoint) ?? "https://api.cognitive.microsofttranslator.com"
+        microsoftTranslatorKey = defaults.string(forKey: Keys.microsoftTranslatorKey) ?? ""
+        microsoftTranslatorRegion = defaults.string(forKey: Keys.microsoftTranslatorRegion) ?? ""
+        microsoftDictionaryFromLanguage = defaults.string(forKey: Keys.microsoftDictionaryFromLanguage) ?? "en"
+        microsoftDictionaryToLanguage = defaults.string(forKey: Keys.microsoftDictionaryToLanguage) ?? "zh-Hans"
         hotkeyKeyCode = defaults.integer(forKey: Keys.hotkeyKeyCode)
         hotkeyModifiers = defaults.integer(forKey: Keys.hotkeyModifiers)
 
@@ -47,6 +63,25 @@ final class AppSettings: ObservableObject {
 
     /// Backends that will actually be called on a translation.
     var enabledBackends: [Backend] { backends.filter { $0.isUsable } }
+
+    var hasEnabledLookupProvider: Bool {
+        !enabledBackends.isEmpty || enableMicrosoftDictionary
+    }
+
+    var microsoftDictionaryConfig: MicrosoftDictionaryConfig {
+        MicrosoftDictionaryConfig(
+            isEnabled: enableMicrosoftDictionary,
+            endpoint: microsoftTranslatorEndpoint,
+            apiKey: microsoftTranslatorKey,
+            region: microsoftTranslatorRegion,
+            fromLanguage: microsoftDictionaryFromLanguage,
+            toLanguage: microsoftDictionaryToLanguage
+        )
+    }
+
+    var targetSpeechLanguageCode: String? {
+        Self.speechLanguageCode(for: targetLanguage)
+    }
 
     func addBackend() {
         backends.append(.makeNew())
@@ -105,6 +140,22 @@ final class AppSettings: ObservableObject {
         """
     }
 
+    private static func speechLanguageCode(for language: String) -> String? {
+        let value = language.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lower = value.lowercased()
+        if value.range(of: #"^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$"#, options: .regularExpression) != nil {
+            return value
+        }
+        if lower.contains("中文") || lower.contains("chinese") { return "zh-Hans" }
+        if lower.contains("英文") || lower.contains("英语") || lower.contains("english") { return "en" }
+        if lower.contains("日文") || lower.contains("日语") || lower.contains("japanese") { return "ja" }
+        if lower.contains("韩文") || lower.contains("韩语") || lower.contains("korean") { return "ko" }
+        if lower.contains("法文") || lower.contains("法语") || lower.contains("french") { return "fr" }
+        if lower.contains("德文") || lower.contains("德语") || lower.contains("german") { return "de" }
+        if lower.contains("西班牙") || lower.contains("spanish") { return "es" }
+        return nil
+    }
+
     private enum Keys {
         static let backends = "backends"
         static let targetLanguage = "targetLanguage"
@@ -112,6 +163,12 @@ final class AppSettings: ObservableObject {
         static let enableHotkey = "enableHotkey"
         static let enableFloatingIcon = "enableFloatingIcon"
         static let restoreClipboard = "restoreClipboard"
+        static let enableMicrosoftDictionary = "enableMicrosoftDictionary"
+        static let microsoftTranslatorEndpoint = "microsoftTranslatorEndpoint"
+        static let microsoftTranslatorKey = "microsoftTranslatorKey"
+        static let microsoftTranslatorRegion = "microsoftTranslatorRegion"
+        static let microsoftDictionaryFromLanguage = "microsoftDictionaryFromLanguage"
+        static let microsoftDictionaryToLanguage = "microsoftDictionaryToLanguage"
         static let hotkeyKeyCode = "hotkeyKeyCode"
         static let hotkeyModifiers = "hotkeyModifiers"
     }
