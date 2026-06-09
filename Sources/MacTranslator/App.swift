@@ -23,6 +23,11 @@ private struct MenuContent: View {
     @EnvironmentObject private var settings: AppSettings
 
     var body: some View {
+        Text(appVersionLabel)
+            .foregroundStyle(.secondary)
+
+        Divider()
+
         Button("翻译剪贴板内容") {
             (NSApp.delegate as? AppDelegate)?.translateClipboard()
         }
@@ -38,5 +43,12 @@ private struct MenuContent: View {
             NSApp.terminate(nil)
         }
         .keyboardShortcut("q")
+    }
+
+    private var appVersionLabel: String {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "1.0"
+        let build = info?["CFBundleVersion"] as? String ?? "dev"
+        return "版本 \(version) (\(build))"
     }
 }

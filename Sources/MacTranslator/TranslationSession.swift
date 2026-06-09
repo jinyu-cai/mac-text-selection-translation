@@ -15,20 +15,47 @@ final class TranslationSession: ObservableObject {
     @Published var sourceText: String = ""
     @Published var results: [Result] = []
     @Published var notice: String?
+    @Published var dictionaryLookup: MicrosoftDictionaryLookup?
+    @Published var dictionaryErrorMessage: String?
+    @Published var isDictionaryLoading = false
+    @Published var sourceSpeechLanguage: String?
+    @Published var targetSpeechLanguage: String?
+    @Published var translationSpeechLanguage: String?
 
     private var tasks: [Task<Void, Never>] = []
+    private var dictionaryTask: Task<Void, Never>?
 
     /// True while any backend is still streaming.
-    var isLoading: Bool { results.contains { $0.isLoading } }
+    var isLoading: Bool { results.contains { $0.isLoading } || isDictionaryLoading }
 
-    func start(text: String, backends: [Backend], prompt: String) {
+    var showsDictionary: Bool {
+        isDictionaryLoading || dictionaryLookup != nil || dictionaryErrorMessage != nil
+    }
+
+    func start(
+        text: String,
+        backends: [Backend],
+        prompt: String,
+        dictionary: MicrosoftDictionaryConfig,
+        translationSpeechLanguage: String?
+    ) {
         cancel()
         notice = nil
         sourceText = text
         results = backends.map { Result(id: $0.id, backendName: $0.name) }
+        dictionaryLookup = nil
+        dictionaryErrorMessage = nil
+        isDictionaryLoading = false
+        sourceSpeechLanguage = dictionary.isEnabled ? dictionary.fromLanguage : nil
+        targetSpeechLanguage = dictionary.isEnabled ? dictionary.toLanguage : nil
+        self.translationSpeechLanguage = translationSpeechLanguage
+
+        if dictionary.isEnabled {
+            startDictionaryLookup(text: text, config: dictionary)
+        }
 
         for backend in backends {
-            let client = OpenAIClient(baseURL: backend.baseURL, apiKey: backend.apiKey, model: backend.model)
+            let client = OpenAIClient(baseURL: backend.baseURL, apiKey: backend.apiKey, model: backend.model, reasoning: backend.reasoning)
             let id = backend.id
             let task = Task { [weak self] in
                 do {
@@ -60,11 +87,46 @@ final class TranslationSession: ObservableObject {
         sourceText = ""
         results = []
         notice = message
+        dictionaryLookup = nil
+        dictionaryErrorMessage = nil
+        isDictionaryLoading = false
+        sourceSpeechLanguage = nil
+        targetSpeechLanguage = nil
+        translationSpeechLanguage = nil
     }
 
     func cancel() {
         tasks.forEach { $0.cancel() }
         tasks.removeAll()
+        dictionaryTask?.cancel()
+        dictionaryTask = nil
+    }
+
+    private func startDictionaryLookup(text: String, config: MicrosoftDictionaryConfig) {
+        isDictionaryLoading = true
+        let task = Task { [weak self] in
+            do {
+                let client = MicrosoftDictionaryClient(
+                    endpoint: config.endpoint,
+                    apiKey: config.apiKey,
+                    region: config.region
+                )
+                let lookup = try await client.lookup(
+                    text: text,
+                    from: config.fromLanguage,
+                    to: config.toLanguage
+                )
+                try Task.checkCancellation()
+                self?.dictionaryLookup = lookup
+                self?.isDictionaryLoading = false
+            } catch is CancellationError {
+                // Superseded by a newer lookup — ignore.
+            } catch {
+                self?.dictionaryErrorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                self?.isDictionaryLoading = false
+            }
+        }
+        dictionaryTask = task
     }
 
     private func update(_ id: UUID, _ mutate: (inout Result) -> Void) {
