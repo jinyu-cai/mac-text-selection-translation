@@ -11,7 +11,7 @@ final class FloatingIconController {
     private var anchorPoint: NSPoint = .zero
     private var autoHideTask: Task<Void, Never>?
     private let size = NSSize(width: 28, height: 28)
-    private let autoHideDelay: UInt64 = 10_000_000_000
+    private let autoHideDelay: UInt64 = 5_000_000_000
 
     func show(at point: NSPoint) {
         anchorPoint = point
