@@ -28,6 +28,7 @@
 ./scripts/create-signing-cert.sh
 
 make run      # 编译 + 打包成 .app + 启动
+make install  # 编译 + 打包 + 替换 /Applications 里的旧版本 + 启动
 # 或分步：
 make build    # 仅编译
 make app      # 打包出「Text Selection Translation.app」
@@ -35,6 +36,7 @@ make clean
 ```
 
 也可以直接 `open "Text Selection Translation.app"`，或拖到「应用程序」里。
+如果想自动覆盖「应用程序」里的旧版本，也可以运行 `./scripts/install-app.sh`；需要管理员权限时脚本会提示输入密码。
 
 > 签名身份：`make app` 会自动使用上面创建的 `MacTranslator Dev` 证书（找不到则退回 ad-hoc `-`）；也可手动指定 `make app SIGN_ID="Your Identity"`。
 

@@ -9,7 +9,7 @@ BUILD_VERSION ?= $(shell /bin/date +%Y%m%d%H%M%S)
 # Override explicitly with: make app SIGN_ID="Your Identity"
 SIGN_ID ?= $(shell security find-identity -p codesigning 2>/dev/null | grep -q "MacTranslator Dev" && echo "MacTranslator Dev" || echo "-")
 
-.PHONY: build app run clean
+.PHONY: build app run install clean
 
 ## Compile the Swift package
 build:
@@ -30,6 +30,10 @@ app: build
 ## Build and launch
 run: app
 	open "$(BUNDLE)"
+
+## Build and replace the copy in /Applications
+install:
+	./scripts/install-app.sh
 
 clean:
 	rm -rf .build "$(BUNDLE)"
