@@ -13,6 +13,7 @@
 - **自动语向**：默认翻译成中文；如果原文已经是中文，则翻译成英文（目标语言可改）。
 - **微软词典**：可选接入 Azure AI Translator Dictionary Lookup，显示词性、候选译词、置信度和回译上下文。
 - **读音**：原文、微软词典译词和 AI 译文都可一键朗读（使用 macOS 本机语音）。
+- **截图 OCR 翻译**：菜单栏选择「截图 OCR 翻译…」，框选无法复制的网页/电子书区域后自动识别并翻译。
 - **自定义提示词**：可用自己的 system prompt 完全覆盖默认翻译指令。
 - **取词后恢复剪贴板**：默认开启，不污染你的剪贴板。
 - **开机自启动**：设置 → 通用里可开关（基于 `SMAppService`），开启后随登录自动在菜单栏待命。
@@ -52,6 +53,8 @@ make clean
 > 若改回 ad-hoc 签名（`-`），则每次重新打包后都要重新授权。
 > 改过名/换过签名方式后，记得先在列表里**删掉旧的残留条目**再重新授权。
 
+截图 OCR 需要 **屏幕录制** 权限：打开 **系统设置 → 隐私与安全性 → 屏幕录制**，把「Text Selection Translation」加进列表并打开开关。授权后如仍不可用，请重新启动 App。
+
 ## 配置
 
 点菜单栏图标 → **设置…**：
@@ -62,6 +65,7 @@ make clean
 | API Key | `Bearer` 鉴权；本地服务可留空 |
 | 模型 | 如 `gpt-4o-mini`、`deepseek-chat`、`qwen2.5:7b` |
 | 微软词典 | 开启后填写 Translator Endpoint / Key / Region，以及源语言和目标语言代码（默认 `en` → `zh-Hans`） |
+| 截图 OCR | 菜单栏里启动；适合在线电子书、图片或禁止复制的网页文字 |
 | 目标语言 | 默认「中文」 |
 | 自定义提示词 | 留空用内置提示；填了则完全覆盖 |
 | 快捷键 | 点一下开始录制，按下组合键即可 |
@@ -78,6 +82,7 @@ Sources/MacTranslator/
 ├─ HotKeyManager.swift    Carbon 全局快捷键
 ├─ SelectionWatcher.swift 全局鼠标监听，判断“可能选中了文字”
 ├─ TextCapture.swift      模拟 ⌘C 取词 + 恢复剪贴板
+├─ OCRTextCapture.swift   框选截图 + Vision OCR 识别
 ├─ OpenAIClient.swift     OpenAI 兼容客户端（SSE 流式）
 ├─ TranslationSession.swift  单次翻译的可观察状态
 ├─ Popup.swift            贴光标的翻译浮窗
@@ -90,4 +95,4 @@ Sources/MacTranslator/
 
 - 取词用模拟 `⌘C`，极少数 App（如某些终端/安全输入框）可能取不到。
 - 浮标基于“拖选/双击”启发式判断，并不知道是否真的选中了文字；点了之后若取词为空则不弹窗。
-- 未做翻译历史、多服务商一键切换、朗读(TTS)、OCR 截图翻译——都可后续扩展。
+- 未做翻译历史、多服务商一键切换、朗读(TTS)——都可后续扩展。

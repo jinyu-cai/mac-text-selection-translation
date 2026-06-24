@@ -32,6 +32,10 @@ private struct MenuContent: View {
             (NSApp.delegate as? AppDelegate)?.translateClipboard()
         }
 
+        Button("截图 OCR 翻译…") {
+            (NSApp.delegate as? AppDelegate)?.translateScreenshotOCR()
+        }
+
         Divider()
 
         SettingsLink {

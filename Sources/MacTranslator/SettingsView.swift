@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import CoreGraphics
 import SwiftUI
 
 struct SettingsView: View {
@@ -152,7 +153,16 @@ struct SettingsView: View {
                     Spacer()
                     Button("打开系统设置") { openAccessibilitySettings() }
                 }
-                Text("划词取词需要「辅助功能」权限（用于模拟 ⌘C 复制选中文字）。授权后请重新启动本 App。")
+                HStack {
+                    Label(
+                        screenRecordingAllowed ? "屏幕录制权限：已授权" : "屏幕录制权限：未授权",
+                        systemImage: screenRecordingAllowed ? "checkmark.shield.fill" : "exclamationmark.shield.fill"
+                    )
+                    .foregroundStyle(screenRecordingAllowed ? .green : .orange)
+                    Spacer()
+                    Button("打开屏幕录制") { openScreenRecordingSettings() }
+                }
+                Text("划词取词需要「辅助功能」权限；截图 OCR 需要「屏幕录制」权限。授权后如仍不可用，请重启本 App。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -265,6 +275,7 @@ struct SettingsView: View {
     }
 
     private var accessibilityTrusted: Bool { AXIsProcessTrusted() }
+    private var screenRecordingAllowed: Bool { CGPreflightScreenCaptureAccess() }
 
     private func reconfigure() {
         (NSApp.delegate as? AppDelegate)?.configureTriggers()
@@ -272,6 +283,12 @@ struct SettingsView: View {
 
     private func openAccessibilitySettings() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    private func openScreenRecordingSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
             NSWorkspace.shared.open(url)
         }
     }
