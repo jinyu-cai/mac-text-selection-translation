@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import CoreGraphics
 import SwiftUI
 
 struct SettingsView: View {
@@ -68,8 +69,11 @@ struct SettingsView: View {
                 if settings.enableMicrosoftDictionary {
                     TextField("Endpoint", text: $settings.microsoftTranslatorEndpoint, prompt: Text("https://api.cognitive.microsofttranslator.com"))
                         .textFieldStyle(.roundedBorder)
-                    SecureField("Translator Key", text: $settings.microsoftTranslatorKey)
-                        .textFieldStyle(.roundedBorder)
+                    SecretTextField(
+                        title: "Translator Key",
+                        text: $settings.microsoftTranslatorKey,
+                        prompt: "Azure Translator key"
+                    )
                     TextField("Region", text: $settings.microsoftTranslatorRegion, prompt: Text("eastus / global 资源可按需留空"))
                         .textFieldStyle(.roundedBorder)
                     HStack(spacing: 8) {
@@ -126,6 +130,13 @@ struct SettingsView: View {
                 }
             }
 
+            Section("笔记") {
+                Toggle("启用保存笔记", isOn: $settings.enableNotes)
+                Text("开启后，翻译浮窗会显示保存按钮；笔记保存在本机 Application Support 目录。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("划词") {
                 Toggle("启用全局快捷键", isOn: $settings.enableHotkey)
                     .onChange(of: settings.enableHotkey) { reconfigure() }
@@ -135,6 +146,16 @@ struct SettingsView: View {
                         .onChange(of: settings.hotkeyKeyCode) { reconfigure() }
                         .onChange(of: settings.hotkeyModifiers) { reconfigure() }
                         .disabled(!settings.enableHotkey)
+                }
+
+                Toggle("启用截图 OCR 快捷键", isOn: $settings.enableOCRHotkey)
+                    .onChange(of: settings.enableOCRHotkey) { reconfigure() }
+
+                LabeledContent("OCR 快捷键") {
+                    ShortcutRecorder(keyCode: $settings.ocrHotkeyKeyCode, modifiers: $settings.ocrHotkeyModifiers)
+                        .onChange(of: settings.ocrHotkeyKeyCode) { reconfigure() }
+                        .onChange(of: settings.ocrHotkeyModifiers) { reconfigure() }
+                        .disabled(!settings.enableOCRHotkey)
                 }
 
                 Toggle("选中文字后显示浮动翻译按钮", isOn: $settings.enableFloatingIcon)
@@ -152,7 +173,16 @@ struct SettingsView: View {
                     Spacer()
                     Button("打开系统设置") { openAccessibilitySettings() }
                 }
-                Text("划词取词需要「辅助功能」权限（用于模拟 ⌘C 复制选中文字）。授权后请重新启动本 App。")
+                HStack {
+                    Label(
+                        screenRecordingAllowed ? "屏幕录制权限：已授权" : "屏幕录制权限：未授权",
+                        systemImage: screenRecordingAllowed ? "checkmark.shield.fill" : "exclamationmark.shield.fill"
+                    )
+                    .foregroundStyle(screenRecordingAllowed ? .green : .orange)
+                    Spacer()
+                    Button("打开屏幕录制") { openScreenRecordingSettings() }
+                }
+                Text("划词取词需要「辅助功能」权限；截图 OCR 需要「屏幕录制」权限。授权后如仍不可用，请重启本 App。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -265,6 +295,7 @@ struct SettingsView: View {
     }
 
     private var accessibilityTrusted: Bool { AXIsProcessTrusted() }
+    private var screenRecordingAllowed: Bool { CGPreflightScreenCaptureAccess() }
 
     private func reconfigure() {
         (NSApp.delegate as? AppDelegate)?.configureTriggers()
@@ -272,6 +303,12 @@ struct SettingsView: View {
 
     private func openAccessibilitySettings() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    private func openScreenRecordingSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
             NSWorkspace.shared.open(url)
         }
     }
@@ -301,8 +338,11 @@ private struct BackendRow: View {
             }
             TextField("Base URL", text: $backend.baseURL, prompt: Text("https://api.openai.com/v1"))
                 .textFieldStyle(.roundedBorder)
-            SecureField("API Key", text: $backend.apiKey, prompt: Text("sk-...（本地服务可留空）"))
-                .textFieldStyle(.roundedBorder)
+            SecretTextField(
+                title: "API Key",
+                text: $backend.apiKey,
+                prompt: "sk-...（本地服务可留空）"
+            )
             TextField("模型", text: $backend.model, prompt: Text("gpt-4o-mini"))
                 .textFieldStyle(.roundedBorder)
             HStack(spacing: 8) {
@@ -333,6 +373,63 @@ private struct BackendRow: View {
         }
         .padding(.vertical, 4)
         .opacity(backend.isEnabled ? 1 : 0.55)
+    }
+}
+
+/// Password-style text field with explicit reveal and copy controls.
+private struct SecretTextField: View {
+    let title: String
+    @Binding var text: String
+    let prompt: String
+
+    @State private var isRevealed = false
+    @State private var didCopy = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Group {
+                if isRevealed {
+                    TextField(title, text: $text, prompt: Text(prompt))
+                } else {
+                    SecureField(title, text: $text, prompt: Text(prompt))
+                }
+            }
+            .textFieldStyle(.roundedBorder)
+
+            Button {
+                isRevealed.toggle()
+            } label: {
+                Image(systemName: isRevealed ? "eye.slash" : "eye")
+                    .frame(width: 18, height: 18)
+            }
+            .buttonStyle(.borderless)
+            .help(isRevealed ? "隐藏 \(title)" : "显示 \(title)")
+
+            Button {
+                copyToPasteboard()
+            } label: {
+                Image(systemName: didCopy ? "checkmark.circle.fill" : "doc.on.doc")
+                    .frame(width: 18, height: 18)
+            }
+            .buttonStyle(.borderless)
+            .help(text.isEmpty ? "\(title) 为空" : "复制 \(title)")
+            .disabled(text.isEmpty)
+        }
+        .onChange(of: text) {
+            didCopy = false
+        }
+    }
+
+    private func copyToPasteboard() {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+        didCopy = true
+
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.2))
+            didCopy = false
+        }
     }
 }
 

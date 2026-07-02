@@ -13,8 +13,10 @@ final class AppSettings: ObservableObject {
     @Published var targetLanguage: String { didSet { defaults.set(targetLanguage, forKey: Keys.targetLanguage) } }
     @Published var customPrompt: String { didSet { defaults.set(customPrompt, forKey: Keys.customPrompt) } }
     @Published var enableHotkey: Bool { didSet { defaults.set(enableHotkey, forKey: Keys.enableHotkey) } }
+    @Published var enableOCRHotkey: Bool { didSet { defaults.set(enableOCRHotkey, forKey: Keys.enableOCRHotkey) } }
     @Published var enableFloatingIcon: Bool { didSet { defaults.set(enableFloatingIcon, forKey: Keys.enableFloatingIcon) } }
     @Published var restoreClipboard: Bool { didSet { defaults.set(restoreClipboard, forKey: Keys.restoreClipboard) } }
+    @Published var enableNotes: Bool { didSet { defaults.set(enableNotes, forKey: Keys.enableNotes) } }
     @Published var enableMicrosoftDictionary: Bool { didSet { defaults.set(enableMicrosoftDictionary, forKey: Keys.enableMicrosoftDictionary) } }
     @Published var microsoftTranslatorEndpoint: String { didSet { defaults.set(microsoftTranslatorEndpoint, forKey: Keys.microsoftTranslatorEndpoint) } }
     @Published var microsoftTranslatorKey: String { didSet { defaults.set(microsoftTranslatorKey, forKey: Keys.microsoftTranslatorKey) } }
@@ -23,26 +25,34 @@ final class AppSettings: ObservableObject {
     @Published var microsoftDictionaryToLanguage: String { didSet { defaults.set(microsoftDictionaryToLanguage, forKey: Keys.microsoftDictionaryToLanguage) } }
     @Published var hotkeyKeyCode: Int { didSet { defaults.set(hotkeyKeyCode, forKey: Keys.hotkeyKeyCode) } }
     @Published var hotkeyModifiers: Int { didSet { defaults.set(hotkeyModifiers, forKey: Keys.hotkeyModifiers) } }
+    @Published var ocrHotkeyKeyCode: Int { didSet { defaults.set(ocrHotkeyKeyCode, forKey: Keys.ocrHotkeyKeyCode) } }
+    @Published var ocrHotkeyModifiers: Int { didSet { defaults.set(ocrHotkeyModifiers, forKey: Keys.ocrHotkeyModifiers) } }
 
     private init() {
         defaults.register(defaults: [
             Keys.targetLanguage: "中文",
             Keys.enableHotkey: true,
+            Keys.enableOCRHotkey: true,
             Keys.enableFloatingIcon: true,
             Keys.restoreClipboard: true,
+            Keys.enableNotes: false,
             Keys.enableMicrosoftDictionary: false,
             Keys.microsoftTranslatorEndpoint: "https://api.cognitive.microsofttranslator.com",
             Keys.microsoftDictionaryFromLanguage: "en",
             Keys.microsoftDictionaryToLanguage: "zh-Hans",
             Keys.hotkeyKeyCode: kVK_ANSI_D,
             Keys.hotkeyModifiers: Int(NSEvent.ModifierFlags.option.rawValue),
+            Keys.ocrHotkeyKeyCode: kVK_ANSI_D,
+            Keys.ocrHotkeyModifiers: Int(NSEvent.ModifierFlags([.option, .shift]).rawValue),
         ])
 
         targetLanguage = defaults.string(forKey: Keys.targetLanguage) ?? "中文"
         customPrompt = defaults.string(forKey: Keys.customPrompt) ?? ""
         enableHotkey = defaults.bool(forKey: Keys.enableHotkey)
+        enableOCRHotkey = defaults.bool(forKey: Keys.enableOCRHotkey)
         enableFloatingIcon = defaults.bool(forKey: Keys.enableFloatingIcon)
         restoreClipboard = defaults.bool(forKey: Keys.restoreClipboard)
+        enableNotes = defaults.bool(forKey: Keys.enableNotes)
         enableMicrosoftDictionary = defaults.bool(forKey: Keys.enableMicrosoftDictionary)
         microsoftTranslatorEndpoint = defaults.string(forKey: Keys.microsoftTranslatorEndpoint) ?? "https://api.cognitive.microsofttranslator.com"
         microsoftTranslatorKey = defaults.string(forKey: Keys.microsoftTranslatorKey) ?? ""
@@ -51,6 +61,8 @@ final class AppSettings: ObservableObject {
         microsoftDictionaryToLanguage = defaults.string(forKey: Keys.microsoftDictionaryToLanguage) ?? "zh-Hans"
         hotkeyKeyCode = defaults.integer(forKey: Keys.hotkeyKeyCode)
         hotkeyModifiers = defaults.integer(forKey: Keys.hotkeyModifiers)
+        ocrHotkeyKeyCode = defaults.integer(forKey: Keys.ocrHotkeyKeyCode)
+        ocrHotkeyModifiers = defaults.integer(forKey: Keys.ocrHotkeyModifiers)
 
         backends = Self.loadBackends(from: defaults)
         // Persist the migrated/default set so it survives even without edits.
@@ -114,7 +126,15 @@ final class AppSettings: ObservableObject {
 
     /// The stored Cocoa modifier flags translated into Carbon modifier bits.
     var hotkeyCarbonModifiers: UInt32 {
-        let flags = NSEvent.ModifierFlags(rawValue: UInt(hotkeyModifiers))
+        Self.carbonModifiers(from: hotkeyModifiers)
+    }
+
+    var ocrHotkeyCarbonModifiers: UInt32 {
+        Self.carbonModifiers(from: ocrHotkeyModifiers)
+    }
+
+    private static func carbonModifiers(from modifiers: Int) -> UInt32 {
+        let flags = NSEvent.ModifierFlags(rawValue: UInt(modifiers))
         var carbon: UInt32 = 0
         if flags.contains(.command) { carbon |= UInt32(cmdKey) }
         if flags.contains(.shift) { carbon |= UInt32(shiftKey) }
@@ -161,8 +181,10 @@ final class AppSettings: ObservableObject {
         static let targetLanguage = "targetLanguage"
         static let customPrompt = "customPrompt"
         static let enableHotkey = "enableHotkey"
+        static let enableOCRHotkey = "enableOCRHotkey"
         static let enableFloatingIcon = "enableFloatingIcon"
         static let restoreClipboard = "restoreClipboard"
+        static let enableNotes = "enableNotes"
         static let enableMicrosoftDictionary = "enableMicrosoftDictionary"
         static let microsoftTranslatorEndpoint = "microsoftTranslatorEndpoint"
         static let microsoftTranslatorKey = "microsoftTranslatorKey"
@@ -171,5 +193,7 @@ final class AppSettings: ObservableObject {
         static let microsoftDictionaryToLanguage = "microsoftDictionaryToLanguage"
         static let hotkeyKeyCode = "hotkeyKeyCode"
         static let hotkeyModifiers = "hotkeyModifiers"
+        static let ocrHotkeyKeyCode = "ocrHotkeyKeyCode"
+        static let ocrHotkeyModifiers = "ocrHotkeyModifiers"
     }
 }
