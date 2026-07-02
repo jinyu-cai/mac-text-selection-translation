@@ -9,15 +9,19 @@ BUILD_VERSION ?= $(shell /bin/date +%Y%m%d%H%M%S)
 # Override explicitly with: make app SIGN_ID="Your Identity"
 SIGN_ID ?= $(shell security find-identity -p codesigning 2>/dev/null | grep -q "MacTranslator Dev" && echo "MacTranslator Dev" || echo "-")
 
-.PHONY: build app run clean
+.PHONY: build app run install clean clean-app
 
 ## Compile the Swift package
 build:
 	swift build -c $(CONFIG)
 
-## Assemble a runnable .app bundle (ad-hoc signed)
-app: build
+## Remove the previously generated local .app bundle
+clean-app:
 	rm -rf "$(BUNDLE)"
+
+## Assemble a runnable .app bundle (ad-hoc signed)
+app: clean-app
+	$(MAKE) build CONFIG="$(CONFIG)"
 	mkdir -p "$(BUNDLE)/Contents/MacOS"
 	mkdir -p "$(BUNDLE)/Contents/Resources"
 	cp ".build/$(CONFIG)/$(BIN)" "$(BUNDLE)/Contents/MacOS/$(BIN)"
@@ -30,6 +34,10 @@ app: build
 ## Build and launch
 run: app
 	open "$(BUNDLE)"
+
+## Build and replace the copy in /Applications
+install:
+	./scripts/install-app.sh
 
 clean:
 	rm -rf .build "$(BUNDLE)"

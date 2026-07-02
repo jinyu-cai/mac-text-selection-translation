@@ -281,6 +281,10 @@ private struct PopupView: View {
     var onClose: () -> Void
     var onHeightChange: (CGFloat) -> Void
 
+    @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var noteStore = NoteStore.shared
+    @State private var didSaveNote = false
+
     private var isUserSized: Bool { layout.userSize != nil }
 
     var body: some View {
@@ -304,6 +308,9 @@ private struct PopupView: View {
                     }
             }
         )
+        .onChange(of: session.sourceText) { _, _ in
+            didSaveNote = false
+        }
     }
 
     private var header: some View {
@@ -317,6 +324,16 @@ private struct PopupView: View {
             if session.isLoading {
                 ProgressView().controlSize(.small)
             }
+            if settings.enableNotes, session.notice == nil {
+                Button {
+                    saveNote()
+                } label: {
+                    Image(systemName: didSaveNote ? "checkmark.circle.fill" : "note.text.badge.plus")
+                }
+                .buttonStyle(.borderless)
+                .help(didSaveNote ? "已保存到笔记" : "保存到笔记")
+                .disabled(didSaveNote || session.isLoading || session.sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
             Button(action: onClose) {
                 Image(systemName: "xmark")
             }
@@ -329,6 +346,22 @@ private struct PopupView: View {
         if session.results.isEmpty, session.showsDictionary { return "词典" }
         if session.showsDictionary { return "翻译 / 词典" }
         return "翻译"
+    }
+
+    private var primaryTranslation: TranslationSession.Result? {
+        session.results.first {
+            !$0.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.errorMessage == nil
+        }
+    }
+
+    private func saveNote() {
+        let result = primaryTranslation
+        noteStore.add(
+            sourceText: session.sourceText,
+            translatedText: result?.output,
+            backendName: result?.backendName
+        )
+        didSaveNote = true
     }
 
     @ViewBuilder

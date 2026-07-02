@@ -9,7 +9,11 @@ final class HotKeyManager {
     private var handler: (() -> Void)?
 
     // 'MTRK' — an arbitrary signature identifying our hotkey.
-    private let hotKeyID = EventHotKeyID(signature: 0x4D54_524B, id: 1)
+    private let hotKeyID: EventHotKeyID
+
+    init(id: UInt32) {
+        hotKeyID = EventHotKeyID(signature: 0x4D54_524B, id: id)
+    }
 
     func register(keyCode: UInt32, modifiers: UInt32, handler: @escaping () -> Void) {
         unregister()
