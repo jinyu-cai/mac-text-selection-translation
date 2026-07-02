@@ -68,9 +68,17 @@ final class OCRTextCapture {
     }
 
     private func showOverlays() {
+        let mouseLocation = NSEvent.mouseLocation
+        let activeScreen = NSScreen.screens.first { $0.frame.contains(mouseLocation) }
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+
         overlayWindows = NSScreen.screens.map { screen in
             let window = OCRSelectionWindow(screen: screen)
             let view = OCRSelectionView(frame: NSRect(origin: .zero, size: screen.frame.size))
+            if screen.displayID == activeScreen?.displayID {
+                view.setInitialSelection(defaultSelectionRect(around: mouseLocation, in: screen))
+            }
             view.onComplete = { [weak self, weak screen] rect in
                 guard let screen else { return }
                 self?.finish(.success(Selection(screen: screen, rect: rect)))
@@ -83,6 +91,28 @@ final class OCRTextCapture {
             return window
         }
         NSCursor.crosshair.set()
+    }
+
+    private func defaultSelectionRect(around point: CGPoint, in screen: NSScreen) -> CGRect {
+        let margin: CGFloat = 32
+        let bounds = CGRect(origin: .zero, size: screen.frame.size)
+        let maxWidth = max(160, bounds.width - margin * 2)
+        let maxHeight = max(120, bounds.height - margin * 2)
+        let size = CGSize(
+            width: min(520, maxWidth),
+            height: min(240, maxHeight)
+        )
+        let localPoint = CGPoint(
+            x: point.x - screen.frame.minX,
+            y: point.y - screen.frame.minY
+        )
+        let maxOriginX = max(margin, bounds.width - size.width - margin)
+        let maxOriginY = max(margin, bounds.height - size.height - margin)
+        let origin = CGPoint(
+            x: min(max(localPoint.x - size.width / 2, margin), maxOriginX),
+            y: min(max(localPoint.y - size.height / 2, margin), maxOriginY)
+        )
+        return CGRect(origin: origin, size: size)
     }
 
     private func finish(_ result: Result<Selection, Error>) {
@@ -101,18 +131,30 @@ final class OCRTextCapture {
     private func captureImage(for selection: Selection) -> CGImage? {
         guard let displayID = selection.screen.displayID else { return nil }
 
-        let scale = selection.screen.backingScaleFactor
         let rect = selection.rect.standardized
-        let screenHeight = selection.screen.frame.height
-        let pixelRect = CGRect(
-            x: rect.minX * scale,
-            y: (screenHeight - rect.maxY) * scale,
-            width: rect.width * scale,
-            height: rect.height * scale
-        ).integral
+        let displayBounds = CGDisplayBounds(displayID)
+        let localBounds = CGRect(origin: .zero, size: displayBounds.size)
+        let captureRect = CGRect(
+            x: rect.minX,
+            y: localBounds.height - rect.maxY,
+            width: rect.width,
+            height: rect.height
+        )
+        .integral
+        .intersection(localBounds)
 
-        guard pixelRect.width > 0, pixelRect.height > 0 else { return nil }
-        return CGDisplayCreateImage(displayID, rect: pixelRect)
+        guard !captureRect.isNull, !captureRect.isEmpty else { return nil }
+
+        if let image = CGDisplayCreateImage(displayID, rect: captureRect) {
+            return image
+        }
+
+        if let fullImage = CGDisplayCreateImage(displayID),
+           let croppedImage = fullImage.cropping(to: captureRect) {
+            return croppedImage
+        }
+
+        return nil
     }
 }
 
@@ -180,19 +222,29 @@ private final class OCRSelectionView: NSView {
     var onComplete: ((CGRect) -> Void)?
     var onCancel: (() -> Void)?
 
-    private var startPoint: CGPoint?
-    private var currentPoint: CGPoint?
+    private var selectionRect: CGRect?
+    private var dragStartPoint: CGPoint?
+    private var dragCurrentPoint: CGPoint?
 
     override var acceptsFirstResponder: Bool { true }
 
-    private var selectionRect: CGRect? {
-        guard let startPoint, let currentPoint else { return nil }
+    private var dragRect: CGRect? {
+        guard let dragStartPoint, let dragCurrentPoint else { return nil }
         return CGRect(
-            x: min(startPoint.x, currentPoint.x),
-            y: min(startPoint.y, currentPoint.y),
-            width: abs(startPoint.x - currentPoint.x),
-            height: abs(startPoint.y - currentPoint.y)
+            x: min(dragStartPoint.x, dragCurrentPoint.x),
+            y: min(dragStartPoint.y, dragCurrentPoint.y),
+            width: abs(dragStartPoint.x - dragCurrentPoint.x),
+            height: abs(dragStartPoint.y - dragCurrentPoint.y)
         )
+    }
+
+    private var visibleSelectionRect: CGRect? {
+        dragRect ?? selectionRect
+    }
+
+    func setInitialSelection(_ rect: CGRect) {
+        selectionRect = rect.standardized
+        needsDisplay = true
     }
 
     override func viewDidMoveToWindow() {
@@ -200,28 +252,54 @@ private final class OCRSelectionView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        startPoint = convert(event.locationInWindow, from: nil)
-        currentPoint = startPoint
+        dragStartPoint = convert(event.locationInWindow, from: nil)
+        dragCurrentPoint = dragStartPoint
         needsDisplay = true
     }
 
     override func mouseDragged(with event: NSEvent) {
-        currentPoint = convert(event.locationInWindow, from: nil)
+        dragCurrentPoint = convert(event.locationInWindow, from: nil)
         needsDisplay = true
     }
 
     override func mouseUp(with event: NSEvent) {
-        currentPoint = convert(event.locationInWindow, from: nil)
-        guard let rect = selectionRect, rect.width >= 8, rect.height >= 8 else {
+        dragCurrentPoint = convert(event.locationInWindow, from: nil)
+        if let rect = dragRect, rect.width >= 8, rect.height >= 8 {
+            selectionRect = rect.standardized
+            completeSelection()
+            return
+        }
+
+        let startedInsideSelection = dragStartPoint.map { point in
+            selectionRect?.standardized.contains(point) ?? false
+        } ?? false
+        dragStartPoint = nil
+        dragCurrentPoint = nil
+
+        if startedInsideSelection {
+            completeSelection()
+        } else if selectionRect == nil {
+            onCancel?()
+        } else {
+            needsDisplay = true
+        }
+    }
+
+    private func completeSelection() {
+        guard let rect = selectionRect?.standardized, rect.width >= 8, rect.height >= 8 else {
             onCancel?()
             return
         }
+        dragStartPoint = nil
+        dragCurrentPoint = nil
         onComplete?(rect)
     }
 
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 {
             onCancel?()
+        } else if event.keyCode == 36 || event.keyCode == 76 {
+            completeSelection()
         } else {
             super.keyDown(with: event)
         }
@@ -233,7 +311,7 @@ private final class OCRSelectionView: NSView {
 
         drawInstruction()
 
-        guard let rect = selectionRect else { return }
+        guard let rect = visibleSelectionRect else { return }
         NSColor.controlAccentColor.withAlphaComponent(0.16).setFill()
         NSBezierPath(rect: rect).fill()
 
@@ -244,7 +322,7 @@ private final class OCRSelectionView: NSView {
     }
 
     private func drawInstruction() {
-        let text = "拖拽框选要 OCR 的文字区域，按 Esc 取消"
+        let text = "拖拽重选 OCR 区域，按 Enter 识别，Esc 取消"
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 15, weight: .medium),
             .foregroundColor: NSColor.white

@@ -127,6 +127,13 @@ struct SettingsView: View {
                 }
             }
 
+            Section("笔记") {
+                Toggle("启用保存笔记", isOn: $settings.enableNotes)
+                Text("开启后，翻译浮窗会显示保存按钮；笔记保存在本机 Application Support 目录。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("划词") {
                 Toggle("启用全局快捷键", isOn: $settings.enableHotkey)
                     .onChange(of: settings.enableHotkey) { reconfigure() }
@@ -136,6 +143,16 @@ struct SettingsView: View {
                         .onChange(of: settings.hotkeyKeyCode) { reconfigure() }
                         .onChange(of: settings.hotkeyModifiers) { reconfigure() }
                         .disabled(!settings.enableHotkey)
+                }
+
+                Toggle("启用截图 OCR 快捷键", isOn: $settings.enableOCRHotkey)
+                    .onChange(of: settings.enableOCRHotkey) { reconfigure() }
+
+                LabeledContent("OCR 快捷键") {
+                    ShortcutRecorder(keyCode: $settings.ocrHotkeyKeyCode, modifiers: $settings.ocrHotkeyModifiers)
+                        .onChange(of: settings.ocrHotkeyKeyCode) { reconfigure() }
+                        .onChange(of: settings.ocrHotkeyModifiers) { reconfigure() }
+                        .disabled(!settings.enableOCRHotkey)
                 }
 
                 Toggle("选中文字后显示浮动翻译按钮", isOn: $settings.enableFloatingIcon)

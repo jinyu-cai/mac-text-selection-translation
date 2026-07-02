@@ -14,30 +14,52 @@
 - **微软词典**：可选接入 Azure AI Translator Dictionary Lookup，显示词性、候选译词、置信度和回译上下文。
 - **读音**：原文、微软词典译词和 AI 译文都可一键朗读（使用 macOS 本机语音）。
 - **截图 OCR 翻译**：菜单栏选择「截图 OCR 翻译…」，框选无法复制的网页/电子书区域后自动识别并翻译。
+- **本地笔记**：可选开启，保存原文/译文并添加备注；数据保存在本机 Application Support。
 - **自定义提示词**：可用自己的 system prompt 完全覆盖默认翻译指令。
 - **取词后恢复剪贴板**：默认开启，不污染你的剪贴板。
 - **开机自启动**：设置 → 通用里可开关（基于 `SMAppService`），开启后随登录自动在菜单栏待命。
 - **浮窗可拖动**：按住浮窗空白处（或顶部「翻译」标题栏）即可拖到任意位置；翻译流式增长时也会保持在你放的位置。
 - 译文可一键复制 / 选中复制；`Esc` 或点击别处关闭浮窗。
 
-## 构建与运行
+## 安装与运行
 
-需要 Xcode（命令行工具）/ Swift 6 工具链。
+需要 macOS 14+，以及 Xcode（命令行工具）/ Swift 6 工具链。
+
+### 安装到「应用程序」
 
 ```bash
+git clone https://github.com/jinyu-cai/mac-text-selection-translation.git
+cd mac-text-selection-translation
+
 # 一次性：创建本地自签名证书，让「辅助功能」授权只需做一次（见下方「授权」）
 ./scripts/create-signing-cert.sh
 
-make run      # 编译 + 打包成 .app + 启动
-make install  # 编译 + 打包 + 替换 /Applications 里的旧版本 + 启动
-# 或分步：
-make build    # 仅编译
-make app      # 打包出「Text Selection Translation.app」
+make install  # 编译 + 打包 + 安装到 /Applications + 启动
+```
+
+`make install` 会替换 `/Applications/Text Selection Translation.app` 里的旧版本；需要管理员权限时脚本会提示输入密码。
+如果旧版本正在运行且无法自动退出，可以改用：
+
+```bash
+./scripts/install-app.sh --force-quit
+```
+
+如果只想安装但不自动启动：
+
+```bash
+./scripts/install-app.sh --no-open
+```
+
+### 开发运行
+
+```bash
+make run    # 编译 + 打包成当前目录下的 .app + 启动
+make build  # 仅编译
+make app    # 仅打包出「Text Selection Translation.app」
 make clean
 ```
 
-也可以直接 `open "Text Selection Translation.app"`，或拖到「应用程序」里。
-如果想自动覆盖「应用程序」里的旧版本，也可以运行 `./scripts/install-app.sh`；需要管理员权限时脚本会提示输入密码。
+运行 `make app` 后，也可以直接 `open "Text Selection Translation.app"`，或把这个 `.app` 拖到「应用程序」里。
 
 > 签名身份：`make app` 会自动使用上面创建的 `MacTranslator Dev` 证书（找不到则退回 ad-hoc `-`）；也可手动指定 `make app SIGN_ID="Your Identity"`。
 
@@ -66,6 +88,7 @@ make clean
 | 模型 | 如 `gpt-4o-mini`、`deepseek-chat`、`qwen2.5:7b` |
 | 微软词典 | 开启后填写 Translator Endpoint / Key / Region，以及源语言和目标语言代码（默认 `en` → `zh-Hans`） |
 | 截图 OCR | 菜单栏里启动；适合在线电子书、图片或禁止复制的网页文字 |
+| 笔记 | 开启后浮窗显示保存按钮，菜单栏可打开笔记窗口 |
 | 目标语言 | 默认「中文」 |
 | 自定义提示词 | 留空用内置提示；填了则完全覆盖 |
 | 快捷键 | 点一下开始录制，按下组合键即可 |
@@ -95,4 +118,4 @@ Sources/MacTranslator/
 
 - 取词用模拟 `⌘C`，极少数 App（如某些终端/安全输入框）可能取不到。
 - 浮标基于“拖选/双击”启发式判断，并不知道是否真的选中了文字；点了之后若取词为空则不弹窗。
-- 未做翻译历史、多服务商一键切换、朗读(TTS)——都可后续扩展。
+- 未做翻译历史、多服务商一键切换——都可后续扩展。

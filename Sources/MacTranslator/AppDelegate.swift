@@ -5,7 +5,8 @@ import ApplicationServices
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let settings = AppSettings.shared
 
-    private let hotKey = HotKeyManager()
+    private let hotKey = HotKeyManager(id: 1)
+    private let ocrHotKey = HotKeyManager(id: 2)
     private let watcher = SelectionWatcher()
     private let popup = PopupController()
     private let icon = FloatingIconController()
@@ -42,6 +43,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         } else {
             hotKey.unregister()
+        }
+
+        if settings.enableOCRHotkey {
+            ocrHotKey.register(
+                keyCode: UInt32(settings.ocrHotkeyKeyCode),
+                modifiers: settings.ocrHotkeyCarbonModifiers
+            ) { [weak self] in
+                self?.translateScreenshotOCR()
+            }
+        } else {
+            ocrHotKey.unregister()
         }
 
         if settings.enableFloatingIcon {
