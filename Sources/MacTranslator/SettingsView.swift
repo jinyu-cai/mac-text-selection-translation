@@ -69,8 +69,11 @@ struct SettingsView: View {
                 if settings.enableMicrosoftDictionary {
                     TextField("Endpoint", text: $settings.microsoftTranslatorEndpoint, prompt: Text("https://api.cognitive.microsofttranslator.com"))
                         .textFieldStyle(.roundedBorder)
-                    SecureField("Translator Key", text: $settings.microsoftTranslatorKey)
-                        .textFieldStyle(.roundedBorder)
+                    SecretTextField(
+                        title: "Translator Key",
+                        text: $settings.microsoftTranslatorKey,
+                        prompt: "Azure Translator key"
+                    )
                     TextField("Region", text: $settings.microsoftTranslatorRegion, prompt: Text("eastus / global 资源可按需留空"))
                         .textFieldStyle(.roundedBorder)
                     HStack(spacing: 8) {
@@ -335,8 +338,11 @@ private struct BackendRow: View {
             }
             TextField("Base URL", text: $backend.baseURL, prompt: Text("https://api.openai.com/v1"))
                 .textFieldStyle(.roundedBorder)
-            SecureField("API Key", text: $backend.apiKey, prompt: Text("sk-...（本地服务可留空）"))
-                .textFieldStyle(.roundedBorder)
+            SecretTextField(
+                title: "API Key",
+                text: $backend.apiKey,
+                prompt: "sk-...（本地服务可留空）"
+            )
             TextField("模型", text: $backend.model, prompt: Text("gpt-4o-mini"))
                 .textFieldStyle(.roundedBorder)
             HStack(spacing: 8) {
@@ -367,6 +373,63 @@ private struct BackendRow: View {
         }
         .padding(.vertical, 4)
         .opacity(backend.isEnabled ? 1 : 0.55)
+    }
+}
+
+/// Password-style text field with explicit reveal and copy controls.
+private struct SecretTextField: View {
+    let title: String
+    @Binding var text: String
+    let prompt: String
+
+    @State private var isRevealed = false
+    @State private var didCopy = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Group {
+                if isRevealed {
+                    TextField(title, text: $text, prompt: Text(prompt))
+                } else {
+                    SecureField(title, text: $text, prompt: Text(prompt))
+                }
+            }
+            .textFieldStyle(.roundedBorder)
+
+            Button {
+                isRevealed.toggle()
+            } label: {
+                Image(systemName: isRevealed ? "eye.slash" : "eye")
+                    .frame(width: 18, height: 18)
+            }
+            .buttonStyle(.borderless)
+            .help(isRevealed ? "隐藏 \(title)" : "显示 \(title)")
+
+            Button {
+                copyToPasteboard()
+            } label: {
+                Image(systemName: didCopy ? "checkmark.circle.fill" : "doc.on.doc")
+                    .frame(width: 18, height: 18)
+            }
+            .buttonStyle(.borderless)
+            .help(text.isEmpty ? "\(title) 为空" : "复制 \(title)")
+            .disabled(text.isEmpty)
+        }
+        .onChange(of: text) {
+            didCopy = false
+        }
+    }
+
+    private func copyToPasteboard() {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+        didCopy = true
+
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.2))
+            didCopy = false
+        }
     }
 }
 
