@@ -142,20 +142,32 @@ struct SettingsView: View {
                     .onChange(of: settings.enableHotkey) { reconfigure() }
 
                 LabeledContent("快捷键") {
-                    ShortcutRecorder(keyCode: $settings.hotkeyKeyCode, modifiers: $settings.hotkeyModifiers)
-                        .onChange(of: settings.hotkeyKeyCode) { reconfigure() }
-                        .onChange(of: settings.hotkeyModifiers) { reconfigure() }
-                        .disabled(!settings.enableHotkey)
+                    ShortcutRecorder(
+                        keyCode: $settings.hotkeyKeyCode,
+                        modifiers: $settings.hotkeyModifiers,
+                        conflictKeyCode: settings.ocrHotkeyKeyCode,
+                        conflictModifiers: settings.ocrHotkeyModifiers,
+                        onRecordingChanged: setHotkeysPaused
+                    )
+                    .onChange(of: settings.hotkeyKeyCode) { reconfigure() }
+                    .onChange(of: settings.hotkeyModifiers) { reconfigure() }
+                    .disabled(!settings.enableHotkey)
                 }
 
                 Toggle("启用截图 OCR 快捷键", isOn: $settings.enableOCRHotkey)
                     .onChange(of: settings.enableOCRHotkey) { reconfigure() }
 
                 LabeledContent("OCR 快捷键") {
-                    ShortcutRecorder(keyCode: $settings.ocrHotkeyKeyCode, modifiers: $settings.ocrHotkeyModifiers)
-                        .onChange(of: settings.ocrHotkeyKeyCode) { reconfigure() }
-                        .onChange(of: settings.ocrHotkeyModifiers) { reconfigure() }
-                        .disabled(!settings.enableOCRHotkey)
+                    ShortcutRecorder(
+                        keyCode: $settings.ocrHotkeyKeyCode,
+                        modifiers: $settings.ocrHotkeyModifiers,
+                        conflictKeyCode: settings.hotkeyKeyCode,
+                        conflictModifiers: settings.hotkeyModifiers,
+                        onRecordingChanged: setHotkeysPaused
+                    )
+                    .onChange(of: settings.ocrHotkeyKeyCode) { reconfigure() }
+                    .onChange(of: settings.ocrHotkeyModifiers) { reconfigure() }
+                    .disabled(!settings.enableOCRHotkey)
                 }
 
                 Toggle("选中文字后显示浮动翻译按钮", isOn: $settings.enableFloatingIcon)
@@ -301,6 +313,10 @@ struct SettingsView: View {
         (NSApp.delegate as? AppDelegate)?.configureTriggers()
     }
 
+    private func setHotkeysPaused(_ paused: Bool) {
+        (NSApp.delegate as? AppDelegate)?.setHotkeysPaused(paused)
+    }
+
     private func openAccessibilitySettings() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
             NSWorkspace.shared.open(url)
@@ -437,19 +453,29 @@ private struct SecretTextField: View {
 private struct ShortcutRecorder: View {
     @Binding var keyCode: Int
     @Binding var modifiers: Int
+    var conflictKeyCode: Int?
+    var conflictModifiers: Int?
+    var onRecordingChanged: ((Bool) -> Void)?
 
     @State private var recording = false
+    @State private var showsConflict = false
     @State private var monitor: Any?
 
     var body: some View {
         Button {
             recording ? stop() : start()
         } label: {
-            Text(recording ? "请按下快捷键…" : KeyCodeNames.string(forKeyCode: keyCode, modifiers: flags))
+            Text(label)
                 .monospaced()
                 .frame(minWidth: 96)
         }
         .onDisappear { stop() }
+    }
+
+    private var label: String {
+        if showsConflict { return "与另一快捷键相同" }
+        if recording { return "请按下快捷键…" }
+        return KeyCodeNames.string(forKeyCode: keyCode, modifiers: flags)
     }
 
     private var flags: NSEvent.ModifierFlags {
@@ -458,6 +484,7 @@ private struct ShortcutRecorder: View {
 
     private func start() {
         recording = true
+        onRecordingChanged?(true)
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { event in
             if event.keyCode == 53 { // Esc cancels recording
                 stop()
@@ -465,6 +492,10 @@ private struct ShortcutRecorder: View {
             }
             let mods = event.modifierFlags.intersection([.command, .option, .control, .shift])
             guard !mods.isEmpty else { return nil } // require a modifier
+            if Int(event.keyCode) == conflictKeyCode, Int(mods.rawValue) == conflictModifiers {
+                flashConflict()
+                return nil
+            }
             keyCode = Int(event.keyCode)
             modifiers = Int(mods.rawValue)
             stop()
@@ -472,8 +503,20 @@ private struct ShortcutRecorder: View {
         }
     }
 
+    private func flashConflict() {
+        showsConflict = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.4))
+            showsConflict = false
+        }
+    }
+
     private func stop() {
-        recording = false
+        if recording {
+            recording = false
+            onRecordingChanged?(false)
+        }
+        showsConflict = false
         if let monitor {
             NSEvent.removeMonitor(monitor)
             self.monitor = nil

@@ -30,6 +30,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         requestAccessibilityIfNeeded()
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        NoteStore.shared.flush()
+    }
+
+    /// Temporarily releases the global hotkeys while the settings window is
+    /// recording a new shortcut — otherwise the current combo is swallowed
+    /// system-wide by the live registration and can never be re-recorded.
+    func setHotkeysPaused(_ paused: Bool) {
+        if paused {
+            hotKey.unregister()
+            ocrHotKey.unregister()
+        } else {
+            configureTriggers()
+        }
+    }
+
     /// (Re)wires the global hotkey and the selection watcher from current settings.
     /// Safe to call repeatedly — used both at launch and whenever settings change.
     func configureTriggers() {

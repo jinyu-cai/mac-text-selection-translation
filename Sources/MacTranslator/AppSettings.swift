@@ -19,7 +19,7 @@ final class AppSettings: ObservableObject {
     @Published var enableNotes: Bool { didSet { defaults.set(enableNotes, forKey: Keys.enableNotes) } }
     @Published var enableMicrosoftDictionary: Bool { didSet { defaults.set(enableMicrosoftDictionary, forKey: Keys.enableMicrosoftDictionary) } }
     @Published var microsoftTranslatorEndpoint: String { didSet { defaults.set(microsoftTranslatorEndpoint, forKey: Keys.microsoftTranslatorEndpoint) } }
-    @Published var microsoftTranslatorKey: String { didSet { defaults.set(microsoftTranslatorKey, forKey: Keys.microsoftTranslatorKey) } }
+    @Published var microsoftTranslatorKey: String { didSet { KeychainStore.set(microsoftTranslatorKey, for: KeychainStore.Account.microsoftTranslatorKey) } }
     @Published var microsoftTranslatorRegion: String { didSet { defaults.set(microsoftTranslatorRegion, forKey: Keys.microsoftTranslatorRegion) } }
     @Published var microsoftDictionaryFromLanguage: String { didSet { defaults.set(microsoftDictionaryFromLanguage, forKey: Keys.microsoftDictionaryFromLanguage) } }
     @Published var microsoftDictionaryToLanguage: String { didSet { defaults.set(microsoftDictionaryToLanguage, forKey: Keys.microsoftDictionaryToLanguage) } }
@@ -55,7 +55,12 @@ final class AppSettings: ObservableObject {
         enableNotes = defaults.bool(forKey: Keys.enableNotes)
         enableMicrosoftDictionary = defaults.bool(forKey: Keys.enableMicrosoftDictionary)
         microsoftTranslatorEndpoint = defaults.string(forKey: Keys.microsoftTranslatorEndpoint) ?? "https://api.cognitive.microsofttranslator.com"
-        microsoftTranslatorKey = defaults.string(forKey: Keys.microsoftTranslatorKey) ?? ""
+        // One-time migration of the plaintext key out of UserDefaults.
+        if let legacy = defaults.string(forKey: Keys.microsoftTranslatorKey), !legacy.isEmpty {
+            KeychainStore.set(legacy, for: KeychainStore.Account.microsoftTranslatorKey)
+        }
+        defaults.removeObject(forKey: Keys.microsoftTranslatorKey)
+        microsoftTranslatorKey = KeychainStore.string(for: KeychainStore.Account.microsoftTranslatorKey) ?? ""
         microsoftTranslatorRegion = defaults.string(forKey: Keys.microsoftTranslatorRegion) ?? ""
         microsoftDictionaryFromLanguage = defaults.string(forKey: Keys.microsoftDictionaryFromLanguage) ?? "en"
         microsoftDictionaryToLanguage = defaults.string(forKey: Keys.microsoftDictionaryToLanguage) ?? "zh-Hans"
@@ -65,10 +70,10 @@ final class AppSettings: ObservableObject {
         ocrHotkeyModifiers = defaults.integer(forKey: Keys.ocrHotkeyModifiers)
 
         backends = Self.loadBackends(from: defaults)
-        // Persist the migrated/default set so it survives even without edits.
-        if defaults.data(forKey: Keys.backends) == nil {
-            saveBackends()
-        }
+        // Persist the migrated/default set so it survives even without edits,
+        // and move any keys still sitting in old plaintext JSON into the Keychain.
+        saveBackends()
+        defaults.removeObject(forKey: "apiKey") // legacy single-backend key
     }
 
     // MARK: - Backends
@@ -100,11 +105,21 @@ final class AppSettings: ObservableObject {
     }
 
     func removeBackend(_ backend: Backend) {
+        KeychainStore.delete(account: KeychainStore.Account.backendKey(backend.id))
         backends.removeAll { $0.id == backend.id }
     }
 
+    /// Persists the backends: keys go to the Keychain, everything else to
+    /// UserDefaults (with the apiKey field blanked in the stored JSON).
     private func saveBackends() {
-        if let data = try? JSONEncoder().encode(backends) {
+        for backend in backends {
+            KeychainStore.set(backend.apiKey, for: KeychainStore.Account.backendKey(backend.id))
+        }
+        var sanitized = backends
+        for index in sanitized.indices {
+            sanitized[index].apiKey = ""
+        }
+        if let data = try? JSONEncoder().encode(sanitized) {
             defaults.set(data, forKey: Keys.backends)
         }
     }
@@ -112,7 +127,15 @@ final class AppSettings: ObservableObject {
     /// Loads backends from JSON, or migrates the old single-backend config.
     private static func loadBackends(from defaults: UserDefaults) -> [Backend] {
         if let data = defaults.data(forKey: Keys.backends),
-           let decoded = try? JSONDecoder().decode([Backend].self, from: data) {
+           var decoded = try? JSONDecoder().decode([Backend].self, from: data) {
+            for index in decoded.indices {
+                // Keys live in the Keychain; JSON only carries them in the
+                // pre-Keychain format, which the next save migrates over.
+                if let stored = KeychainStore.string(for: KeychainStore.Account.backendKey(decoded[index].id)),
+                   !stored.isEmpty {
+                    decoded[index].apiKey = stored
+                }
+            }
             return decoded
         }
         // Migration: turn the old single apiBaseURL/apiKey/model into one backend.
