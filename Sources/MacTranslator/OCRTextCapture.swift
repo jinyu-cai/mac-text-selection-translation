@@ -68,17 +68,9 @@ final class OCRTextCapture {
     }
 
     private func showOverlays() {
-        let mouseLocation = NSEvent.mouseLocation
-        let activeScreen = NSScreen.screens.first { $0.frame.contains(mouseLocation) }
-            ?? NSScreen.main
-            ?? NSScreen.screens.first
-
         overlayWindows = NSScreen.screens.map { screen in
             let window = OCRSelectionWindow(screen: screen)
             let view = OCRSelectionView(frame: NSRect(origin: .zero, size: screen.frame.size))
-            if screen.displayID == activeScreen?.displayID {
-                view.setInitialSelection(defaultSelectionRect(around: mouseLocation, in: screen))
-            }
             view.onComplete = { [weak self, weak screen] rect in
                 guard let screen else { return }
                 self?.finish(.success(Selection(screen: screen, rect: rect)))
@@ -91,28 +83,6 @@ final class OCRTextCapture {
             return window
         }
         NSCursor.crosshair.set()
-    }
-
-    private func defaultSelectionRect(around point: CGPoint, in screen: NSScreen) -> CGRect {
-        let margin: CGFloat = 32
-        let bounds = CGRect(origin: .zero, size: screen.frame.size)
-        let maxWidth = max(160, bounds.width - margin * 2)
-        let maxHeight = max(120, bounds.height - margin * 2)
-        let size = CGSize(
-            width: min(520, maxWidth),
-            height: min(240, maxHeight)
-        )
-        let localPoint = CGPoint(
-            x: point.x - screen.frame.minX,
-            y: point.y - screen.frame.minY
-        )
-        let maxOriginX = max(margin, bounds.width - size.width - margin)
-        let maxOriginY = max(margin, bounds.height - size.height - margin)
-        let origin = CGPoint(
-            x: min(max(localPoint.x - size.width / 2, margin), maxOriginX),
-            y: min(max(localPoint.y - size.height / 2, margin), maxOriginY)
-        )
-        return CGRect(origin: origin, size: size)
     }
 
     private func finish(_ result: Result<Selection, Error>) {
@@ -228,6 +198,10 @@ private final class OCRSelectionView: NSView {
 
     override var acceptsFirstResponder: Bool { true }
 
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
     private var dragRect: CGRect? {
         guard let dragStartPoint, let dragCurrentPoint else { return nil }
         return CGRect(
@@ -240,11 +214,6 @@ private final class OCRSelectionView: NSView {
 
     private var visibleSelectionRect: CGRect? {
         dragRect ?? selectionRect
-    }
-
-    func setInitialSelection(_ rect: CGRect) {
-        selectionRect = rect.standardized
-        needsDisplay = true
     }
 
     override func viewDidMoveToWindow() {
@@ -322,7 +291,7 @@ private final class OCRSelectionView: NSView {
     }
 
     private func drawInstruction() {
-        let text = "拖拽重选 OCR 区域，按 Enter 识别，Esc 取消"
+        let text = "拖拽选择 OCR 区域，松开开始识别，Esc 取消"
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 15, weight: .medium),
             .foregroundColor: NSColor.white

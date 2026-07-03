@@ -23,7 +23,17 @@
 
 ## 安装与运行
 
-需要 macOS 14+，以及 Xcode（命令行工具）/ Swift 6 工具链。
+需要 macOS 14+。
+
+### 普通用户安装
+
+打开 GitHub Releases，下载最新的 `TextSelectionTranslation-*-macOS-universal.dmg`，双击后把 `Text Selection Translation.app` 拖到「应用程序」即可。
+
+首次打开如果 macOS 提示无法验证开发者，请在 Finder 里右键点击 App，选择「打开」，再确认打开。启动后按提示授予「辅助功能」权限；如果要用截图 OCR，还需要授予「屏幕录制」权限。
+
+### 从源码安装
+
+从源码编译需要 Xcode（命令行工具）/ Swift 6 工具链。
 
 ### 安装到「应用程序」
 
