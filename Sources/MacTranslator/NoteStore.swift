@@ -18,6 +18,7 @@ final class NoteStore: ObservableObject {
     @Published var lastError: String?
 
     private let fileURL: URL
+    private var pendingSave: Task<Void, Never>?
 
     private init() {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
@@ -57,7 +58,9 @@ final class NoteStore: ObservableObject {
         guard let index = notes.firstIndex(where: { $0.id == id }) else { return }
         notes[index].userNote = text
         notes[index].updatedAt = Date()
-        save()
+        // Called on every keystroke of the note editor — debounce the disk
+        // write instead of rewriting the whole file per character.
+        scheduleSave()
     }
 
     func delete(id: UUID) {
@@ -72,7 +75,24 @@ final class NoteStore: ObservableObject {
         save()
     }
 
+    /// Writes any pending debounced edit to disk immediately (e.g. on quit).
+    func flush() {
+        guard pendingSave != nil else { return }
+        save()
+    }
+
+    private func scheduleSave() {
+        pendingSave?.cancel()
+        pendingSave = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard !Task.isCancelled else { return }
+            self?.save()
+        }
+    }
+
     private func save() {
+        pendingSave?.cancel()
+        pendingSave = nil
         do {
             let encoder = JSONEncoder()
             encoder.dateEncodingStrategy = .iso8601

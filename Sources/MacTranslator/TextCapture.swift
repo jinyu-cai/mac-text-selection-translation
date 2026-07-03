@@ -31,7 +31,25 @@ enum TextCapture {
         }
 
         if let saved {
-            restoreItems(pasteboard, from: saved)
+            if captured != nil {
+                restoreItems(pasteboard, from: saved)
+            } else if pasteboard.changeCount == previousChangeCount {
+                // Nothing was copied within the window, but a slow app may
+                // still deliver the ⌘C after we gave up — watch briefly and
+                // put the previous contents back if that happens. If nothing
+                // ever lands, the pasteboard was untouched: no restore needed.
+                Task { @MainActor in
+                    for _ in 0..<12 {
+                        try? await Task.sleep(nanoseconds: 50_000_000)
+                        if pasteboard.changeCount != previousChangeCount {
+                            restoreItems(pasteboard, from: saved)
+                            return
+                        }
+                    }
+                }
+            } else {
+                restoreItems(pasteboard, from: saved)
+            }
         }
 
         return captured?.trimmingCharacters(in: .whitespacesAndNewlines)

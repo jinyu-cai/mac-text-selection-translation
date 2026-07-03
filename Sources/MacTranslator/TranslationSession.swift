@@ -58,10 +58,16 @@ final class TranslationSession: ObservableObject {
             let client = OpenAIClient(baseURL: backend.baseURL, apiKey: backend.apiKey, model: backend.model, reasoning: backend.reasoning)
             let id = backend.id
             let task = Task { [weak self] in
+                // A superseded task can still resume here after `start()` has
+                // reset state for a newer translation, and result ids (backend
+                // ids) are stable across translations — so never write state
+                // once cancelled, or it lands on the new translation's card.
                 do {
                     for try await delta in client.translateStream(systemPrompt: prompt, text: text) {
+                        guard !Task.isCancelled else { return }
                         self?.update(id) { $0.output += delta }
                     }
+                    guard !Task.isCancelled else { return }
                     self?.update(id) { result in
                         if result.output.isEmpty {
                             result.errorMessage = TranslationError.emptyResult.errorDescription
@@ -71,6 +77,7 @@ final class TranslationSession: ObservableObject {
                 } catch is CancellationError {
                     // Superseded by a newer translation — ignore.
                 } catch {
+                    guard !Task.isCancelled else { return }
                     self?.update(id) { result in
                         result.errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
                         result.isLoading = false
@@ -122,6 +129,8 @@ final class TranslationSession: ObservableObject {
             } catch is CancellationError {
                 // Superseded by a newer lookup — ignore.
             } catch {
+                // Cancellation can also surface as URLError(.cancelled).
+                guard !Task.isCancelled else { return }
                 self?.dictionaryErrorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
                 self?.isDictionaryLoading = false
             }
