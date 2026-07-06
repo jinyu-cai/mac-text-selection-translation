@@ -451,12 +451,9 @@ private struct ResultCard: View {
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                Text(result.output.isEmpty ? "翻译中…" : result.output)
+                MarkdownText(markdown: result.output, placeholder: "翻译中…")
                     .font(.body)
                     .foregroundStyle(result.output.isEmpty ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .padding(8)
