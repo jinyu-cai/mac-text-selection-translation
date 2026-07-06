@@ -141,9 +141,7 @@ struct NotesView: View {
                                 .buttonStyle(.borderless)
                                 .help("复制译文")
                             }
-                            Text(translated)
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                            MarkdownText(markdown: translated)
                         }
                     }
 
