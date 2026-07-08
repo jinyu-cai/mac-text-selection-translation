@@ -470,6 +470,7 @@ private struct ShortcutRecorder: View {
                 .frame(minWidth: 96)
         }
         .onDisappear { stop() }
+        .help(recording ? "按下新的组合键，Esc 取消" : "点击录制新的快捷键")
     }
 
     private var label: String {

@@ -15,9 +15,10 @@ final class HotKeyManager {
         hotKeyID = EventHotKeyID(signature: 0x4D54_524B, id: id)
     }
 
-    func register(keyCode: UInt32, modifiers: UInt32, handler: @escaping () -> Void) {
+    @discardableResult
+    func register(keyCode: UInt32, modifiers: UInt32, handler: @escaping () -> Void) -> Bool {
         unregister()
-        guard keyCode != 0 else { return }
+        guard modifiers != 0 else { return false }
         self.handler = handler
 
         var eventSpec = EventTypeSpec(
@@ -27,7 +28,7 @@ final class HotKeyManager {
 
         let selfPtr = Unmanaged.passUnretained(self).toOpaque()
 
-        InstallEventHandler(
+        let installStatus = InstallEventHandler(
             GetEventDispatcherTarget(),
             { _, event, userData -> OSStatus in
                 guard let event, let userData else { return noErr }
@@ -54,8 +55,12 @@ final class HotKeyManager {
             selfPtr,
             &eventHandler
         )
+        guard installStatus == noErr else {
+            self.handler = nil
+            return false
+        }
 
-        RegisterEventHotKey(
+        let registerStatus = RegisterEventHotKey(
             keyCode,
             modifiers,
             hotKeyID,
@@ -63,6 +68,12 @@ final class HotKeyManager {
             0,
             &hotKeyRef
         )
+        guard registerStatus == noErr else {
+            unregister()
+            return false
+        }
+
+        return true
     }
 
     func unregister() {
