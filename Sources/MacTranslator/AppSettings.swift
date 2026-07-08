@@ -40,11 +40,12 @@ final class AppSettings: ObservableObject {
             Keys.microsoftTranslatorEndpoint: "https://api.cognitive.microsofttranslator.com",
             Keys.microsoftDictionaryFromLanguage: "en",
             Keys.microsoftDictionaryToLanguage: "zh-Hans",
-            Keys.hotkeyKeyCode: kVK_ANSI_D,
-            Keys.hotkeyModifiers: Int(NSEvent.ModifierFlags.option.rawValue),
-            Keys.ocrHotkeyKeyCode: kVK_ANSI_D,
-            Keys.ocrHotkeyModifiers: Int(NSEvent.ModifierFlags([.option, .shift]).rawValue),
+            Keys.hotkeyKeyCode: DefaultHotkeys.translationKeyCode,
+            Keys.hotkeyModifiers: DefaultHotkeys.translationModifiers,
+            Keys.ocrHotkeyKeyCode: DefaultHotkeys.ocrKeyCode,
+            Keys.ocrHotkeyModifiers: DefaultHotkeys.ocrModifiers,
         ])
+        Self.migrateOCRHotkeyDefault(in: defaults)
 
         targetLanguage = defaults.string(forKey: Keys.targetLanguage) ?? "中文"
         customPrompt = defaults.string(forKey: Keys.customPrompt) ?? ""
@@ -166,6 +167,22 @@ final class AppSettings: ObservableObject {
         return carbon
     }
 
+    private static func migrateOCRHotkeyDefault(in defaults: UserDefaults) {
+        guard !defaults.bool(forKey: Keys.didMigrateOCRHotkeyDefault) else { return }
+
+        let hasStoredKeyCode = defaults.object(forKey: Keys.ocrHotkeyKeyCode) != nil
+        let hasStoredModifiers = defaults.object(forKey: Keys.ocrHotkeyModifiers) != nil
+        if hasStoredKeyCode,
+           hasStoredModifiers,
+           defaults.integer(forKey: Keys.ocrHotkeyKeyCode) == DefaultHotkeys.legacyOCRKeyCode,
+           defaults.integer(forKey: Keys.ocrHotkeyModifiers) == DefaultHotkeys.legacyOCRModifiers {
+            defaults.set(DefaultHotkeys.ocrKeyCode, forKey: Keys.ocrHotkeyKeyCode)
+            defaults.set(DefaultHotkeys.ocrModifiers, forKey: Keys.ocrHotkeyModifiers)
+        }
+
+        defaults.set(true, forKey: Keys.didMigrateOCRHotkeyDefault)
+    }
+
     /// The system prompt sent to the model. A non-empty custom prompt wins;
     /// otherwise we build a faithful translate-into-target instruction that
     /// auto-flips to English when the source is already the target language.
@@ -218,5 +235,16 @@ final class AppSettings: ObservableObject {
         static let hotkeyModifiers = "hotkeyModifiers"
         static let ocrHotkeyKeyCode = "ocrHotkeyKeyCode"
         static let ocrHotkeyModifiers = "ocrHotkeyModifiers"
+        static let didMigrateOCRHotkeyDefault = "didMigrateOCRHotkeyDefaultToOptionShiftO"
+    }
+
+    private enum DefaultHotkeys {
+        static let translationKeyCode = kVK_ANSI_D
+        static let translationModifiers = Int(NSEvent.ModifierFlags.option.rawValue)
+        static let ocrKeyCode = kVK_ANSI_O
+        static let ocrModifiers = Int(NSEvent.ModifierFlags([.option, .shift]).rawValue)
+
+        static let legacyOCRKeyCode = kVK_ANSI_D
+        static let legacyOCRModifiers = Int(NSEvent.ModifierFlags([.option, .shift]).rawValue)
     }
 }
