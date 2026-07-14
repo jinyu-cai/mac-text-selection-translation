@@ -33,7 +33,7 @@
 
 - **语言/框架**：Swift 6 工具链（语言模式 5）、SwiftUI（界面）+ AppKit（窗口/系统集成）
 - **形态**：菜单栏 accessory app（无 Dock 图标）
-- **规模**：13 个 Swift 文件，约 1300 行
+- **规模**：23 个 Swift 文件，约 3900 行
 
 ### 数据流（一次划词翻译）
 
@@ -97,7 +97,17 @@ let package = Package(
     name: "MacTranslator",
     platforms: [.macOS(.v14)],
     targets: [
-        .executableTarget(name: "MacTranslator", path: "Sources/MacTranslator")
+        .target(name: "MacTranslatorCore", path: "Sources/MacTranslatorCore"),
+        .executableTarget(
+            name: "MacTranslator",
+            dependencies: ["MacTranslatorCore"],
+            path: "Sources/MacTranslator"
+        ),
+        .executableTarget(
+            name: "MacTranslatorTests",
+            dependencies: ["MacTranslatorCore"],
+            path: "Tests/MacTranslatorTests"
+        )
     ],
     swiftLanguageModes: [.v5]
 )
@@ -125,7 +135,7 @@ app: build
 	mkdir -p "$(BUNDLE)/Contents/MacOS" "$(BUNDLE)/Contents/Resources"
 	cp ".build/$(CONFIG)/$(BIN)" "$(BUNDLE)/Contents/MacOS/$(BIN)"
 	cp Info.plist "$(BUNDLE)/Contents/Info.plist"
-	codesign --force --sign "$(SIGN_ID)" "$(BUNDLE)" || true
+    codesign --force --sign "$(SIGN_ID)" "$(BUNDLE)"
 ```
 
 要点：
@@ -575,24 +585,15 @@ git push --force origin main fix/settings-window
 
 ## 11. CI 与自动化测试
 
-> ⚠️ **现状**：本项目**目前还没有 CI、也没有单元测试**。下面是「建议的搭建方式」，可作为练习。
+> **现状**：项目已有零第三方依赖的可靠性回归测试目标，覆盖剪贴板恢复、登录项状态和浮窗屏幕边界；目前还没有 CI。
 
-### 11.1 加单元测试
-SPM 加一个测试 target。两种框架：
-- **Swift Testing**（新，Swift 6 推荐，`import Testing` + `@Test`）。
-- **XCTest**（老牌，`import XCTest`）。
+### 11.1 运行与扩展测试
 
-`Package.swift` 加：
-```swift
-.testTarget(name: "MacTranslatorTests", dependencies: ["MacTranslator"], path: "Tests/MacTranslatorTests")
+```bash
+make test
 ```
-适合先测的纯逻辑（不依赖 UI/系统）：
-- `OpenAIClient` 的 SSE 行解析、endpoint 拼接；
-- `AppSettings.effectiveSystemPrompt()`；
-- `KeyCodeNames.string(...)`。
-> 提示：为了可测，把 `OpenAIClient.parse(line:)` 这类纯函数保持 `static` / 无副作用，很好测。`@testable import MacTranslator` 可访问 internal 成员。
 
-跑测试：`swift test`。
+测试目标直接依赖 `MacTranslatorCore`，因此 Command Line Tools 即使没有附带 Swift Testing/XCTest 模块也能执行。适合继续抽取并测试的纯逻辑包括 SSE 解析、endpoint 拼接、提示词生成和快捷键显示。
 
 ### 11.2 加 GitHub Actions CI
 新建 `.github/workflows/ci.yml`（示例）：
@@ -611,11 +612,11 @@ jobs:
       - name: Build
         run: swift build -c release
       - name: Test
-        run: swift test          # 有测试后启用
+        run: make test
 ```
 说明：
 - macOS app 必须用 **macOS runner**（Linux 上没有 AppKit/SwiftUI）。
-- 纯命令行 `swift build`/`swift test` 即可；要产 `.app` 可再跑 `make app`（CI 上一般 ad-hoc 签名）。
+- 纯命令行 `swift build`/`make test` 即可；要产 `.app` 可再跑 `make app`（CI 上一般 ad-hoc 签名）。
 
 ### 11.3 让 CI 成为合并门槛
 CI 跑起来后，可在分支保护里把这个 check 设成 **required status check**：
@@ -634,7 +635,7 @@ JSON
 ## 12. 安全检测
 
 ### 12.1 不把密钥写进代码/历史
-- 本项目 API Key 存在 `UserDefaults`（运行时），**从不进 git**。
+- 本项目 API Key 存在 macOS 钥匙串，非敏感配置存在 `UserDefaults`，**从不进 git**。
 - `.gitignore` 排除 `.build/`、`*.app/`，避免误提交产物。
 - **公开前做了全历史密钥扫描**（人工 + grep 高可信特征：`sk-...`、`gh[pousr]_...`、`AKIA...`、私钥、JWT、Slack token）。建议日后用工具：
   - `gitleaks detect`（专门扫密钥）。
@@ -693,7 +694,7 @@ JSON
 1. **改默认快捷键/目标语言**（改 `AppSettings` 默认值）—— 熟悉项目结构。
 2. **给译文加「朗读」按钮**（`NSSpeechSynthesizer` 或 `AVSpeechSynthesizer`）—— 练 AppKit/AVFoundation API + SwiftUI 按钮。
 3. **加「翻译历史」**：新建一个 `@MainActor ObservableObject` 存最近 N 条，新窗口展示 —— 练状态管理、列表、持久化（`Codable` + 文件/UserDefaults）。
-4. **给纯逻辑加单元测试**（[11.1](#111-加单元测试)）—— 练 `swift test`、依赖解耦。
+4. **扩展纯逻辑回归测试**（[11.1](#111-运行与扩展测试)）—— 练 `make test`、依赖解耦。
 5. **加 CI**（[11.2](#112-加-github-actions-ci)）并设为合并门槛 —— 练工程化。
 6. **多服务商一键切换**：把 `OpenAIClient` 抽象成协议，支持多套预设 —— 练协议、抽象。
 7. **切到语言模式 6**（`Package.swift` 改 `.v6`）—— 直面严格并发，学 `Sendable`/actor 隔离（有挑战）。

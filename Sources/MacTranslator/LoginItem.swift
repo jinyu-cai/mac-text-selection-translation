@@ -1,3 +1,4 @@
+import MacTranslatorCore
 import ServiceManagement
 
 /// "Launch at login" via the modern SMAppService API (macOS 13+).
@@ -8,7 +9,11 @@ enum LoginItem {
     }
 
     static var isEnabled: Bool {
-        status == .enabled
+        LoginItemRegistrationPolicy.isRegistered(status)
+    }
+
+    static var requiresApproval: Bool {
+        status == .requiresApproval
     }
 
     /// Registers/unregisters the app itself as a login item. Throws on failure
@@ -16,13 +21,17 @@ enum LoginItem {
     static func setEnabled(_ enabled: Bool) throws {
         let service = SMAppService.mainApp
         if enabled {
-            if service.status != .enabled {
+            if !LoginItemRegistrationPolicy.isRegistered(service.status) {
                 try service.register()
             }
         } else {
-            if service.status == .enabled {
+            if LoginItemRegistrationPolicy.isRegistered(service.status) {
                 try service.unregister()
             }
         }
+    }
+
+    static func openSystemSettings() {
+        SMAppService.openSystemSettingsLoginItems()
     }
 }

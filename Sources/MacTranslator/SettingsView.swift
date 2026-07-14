@@ -7,6 +7,7 @@ struct SettingsView: View {
     @EnvironmentObject private var settings: AppSettings
 
     @State private var launchAtLogin = LoginItem.isEnabled
+    @State private var launchRequiresApproval = LoginItem.requiresApproval
     @State private var launchError: String?
     @State private var hostWindow: NSWindow?
 
@@ -28,11 +29,26 @@ struct SettingsView: View {
                             launchError = nil
                         } catch {
                             launchError = error.localizedDescription
-                            launchAtLogin = LoginItem.isEnabled // revert to real state
                         }
+                        refreshLaunchState()
                     }
                 if let launchError {
                     Text(launchError).font(.caption).foregroundStyle(.red)
+                }
+                if launchRequiresApproval {
+                    HStack {
+                        Text("登录项已注册，但需要在系统设置中批准。")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                        Spacer()
+                        Button("打开登录项设置") { LoginItem.openSystemSettings() }
+                    }
+                }
+                if let credentialError = settings.credentialError {
+                    Label(credentialError, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
 
@@ -153,6 +169,11 @@ struct SettingsView: View {
                     .onChange(of: settings.hotkeyModifiers) { reconfigure() }
                     .disabled(!settings.enableHotkey)
                 }
+                if let error = settings.hotkeyRegistrationError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
 
                 Toggle("启用截图 OCR 快捷键", isOn: $settings.enableOCRHotkey)
                     .onChange(of: settings.enableOCRHotkey) { reconfigure() }
@@ -168,6 +189,11 @@ struct SettingsView: View {
                     .onChange(of: settings.ocrHotkeyKeyCode) { reconfigure() }
                     .onChange(of: settings.ocrHotkeyModifiers) { reconfigure() }
                     .disabled(!settings.enableOCRHotkey)
+                }
+                if let error = settings.ocrHotkeyRegistrationError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.red)
                 }
 
                 Toggle("选中文字后显示浮动翻译按钮", isOn: $settings.enableFloatingIcon)
@@ -206,7 +232,7 @@ struct SettingsView: View {
             configureSettingsWindow(window)
         })
         .onAppear {
-            launchAtLogin = LoginItem.isEnabled
+            refreshLaunchState()
             // The SwiftUI Settings scene restores its last position (often on
             // another display). Pull it onto the screen the user is using and
             // bring it to the front on open.
@@ -214,6 +240,9 @@ struct SettingsView: View {
                 repositionToActiveScreen()
                 bringToFront()
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refreshLaunchState()
         }
     }
 
@@ -311,6 +340,11 @@ struct SettingsView: View {
 
     private func reconfigure() {
         (NSApp.delegate as? AppDelegate)?.configureTriggers()
+    }
+
+    private func refreshLaunchState() {
+        launchAtLogin = LoginItem.isEnabled
+        launchRequiresApproval = LoginItem.requiresApproval
     }
 
     private func setHotkeysPaused(_ paused: Bool) {

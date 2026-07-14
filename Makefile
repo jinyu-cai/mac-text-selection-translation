@@ -1,7 +1,7 @@
 BUNDLE  = Text Selection Translation.app
 BIN     = MacTranslator
 CONFIG ?= release
-VERSION ?= 1.0.3
+VERSION ?= 1.0.4
 BUILD_VERSION ?= $(shell /bin/date +%Y%m%d%H%M%S)
 # Code-signing identity. Auto-uses the stable self-signed "MacTranslator Dev"
 # cert when present (so the Accessibility grant survives rebuilds); otherwise
@@ -9,11 +9,15 @@ BUILD_VERSION ?= $(shell /bin/date +%Y%m%d%H%M%S)
 # Override explicitly with: make app SIGN_ID="Your Identity"
 SIGN_ID ?= $(shell security find-identity -p codesigning 2>/dev/null | grep -q "MacTranslator Dev" && echo "MacTranslator Dev" || echo "-")
 
-.PHONY: build app run install clean clean-app
+.PHONY: build test app run install clean clean-app
 
 ## Compile the Swift package
 build:
 	swift build -c $(CONFIG)
+
+## Run zero-dependency reliability regression tests
+test:
+	swift run -Xswiftc -warnings-as-errors MacTranslatorTests
 
 ## Remove the previously generated local .app bundle
 clean-app:
@@ -28,7 +32,7 @@ app: clean-app
 	cp Info.plist "$(BUNDLE)/Contents/Info.plist"
 	/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $(VERSION)" "$(BUNDLE)/Contents/Info.plist"
 	/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(BUILD_VERSION)" "$(BUNDLE)/Contents/Info.plist"
-	codesign --force --sign "$(SIGN_ID)" "$(BUNDLE)" || true
+	codesign --force --sign "$(SIGN_ID)" "$(BUNDLE)"
 	@echo "✅ Built $(BUNDLE) version $(VERSION) ($(BUILD_VERSION))"
 
 ## Build and launch
