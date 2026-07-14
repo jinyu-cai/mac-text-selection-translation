@@ -1,4 +1,5 @@
 import AppKit
+import MacTranslatorCore
 import SwiftUI
 
 /// A borderless, non-activating panel that can still become key so the user
@@ -111,12 +112,20 @@ final class PopupController {
     }
 
     private func present(_ panel: FloatingPanel, at point: NSPoint, initialHeight: CGFloat) {
-        let size = layout.userSize ?? CGSize(width: defaultWidth, height: initialHeight)
-        anchorTopLeft = anchor(near: point, height: size.height)
+        let visibleFrame = visibleFrame(near: point)
+        let requestedSize = layout.userSize ?? CGSize(width: defaultWidth, height: initialHeight)
+        let size = PopupGeometry.constrainedSize(
+            requestedSize,
+            minimum: minSize,
+            maximum: maxSize,
+            visibleFrame: visibleFrame
+        )
+        anchorTopLeft = PopupGeometry.topLeft(near: point, size: size, visibleFrame: visibleFrame)
+        let frame = PopupGeometry.frame(topLeft: anchorTopLeft, size: size, visibleFrame: visibleFrame)
         isAdjusting = true
-        panel.setContentSize(size)
-        panel.setFrameTopLeftPoint(anchorTopLeft)
+        panel.setFrame(frame, display: true)
         isAdjusting = false
+        anchorTopLeft = NSPoint(x: frame.minX, y: frame.maxY)
         panel.orderFrontRegardless()
         installDismissMonitors()
     }
@@ -198,11 +207,19 @@ final class PopupController {
     /// not manually resized it.
     private func updateHeight(_ contentHeight: CGFloat) {
         guard let panel, layout.userSize == nil else { return }
-        let clamped = max(110, min(contentHeight, autoMaxHeight))
+        let visibleFrame = panel.screen?.visibleFrame ?? visibleFrame(near: anchorTopLeft)
+        let currentWidth = panel.contentView?.frame.width ?? defaultWidth
+        let size = PopupGeometry.constrainedSize(
+            CGSize(width: currentWidth, height: contentHeight),
+            minimum: CGSize(width: minSize.width, height: 110),
+            maximum: CGSize(width: maxSize.width, height: autoMaxHeight),
+            visibleFrame: visibleFrame
+        )
+        let frame = PopupGeometry.frame(topLeft: anchorTopLeft, size: size, visibleFrame: visibleFrame)
         isAdjusting = true
-        panel.setContentSize(NSSize(width: defaultWidth, height: clamped))
-        panel.setFrameTopLeftPoint(anchorTopLeft)
+        panel.setFrame(frame, display: true)
         isAdjusting = false
+        anchorTopLeft = NSPoint(x: frame.minX, y: frame.maxY)
     }
 
     /// Incremental resize from the drag handle (top-left pinned). `dy` is in
@@ -210,35 +227,28 @@ final class PopupController {
     private func resizeBy(dx: CGFloat, dy: CGFloat) {
         guard let panel else { return }
         let current = panel.contentView?.frame.size ?? panel.frame.size
-        let w = min(max(current.width + dx, minSize.width), maxSize.width)
-        let h = min(max(current.height - dy, minSize.height), maxSize.height)
-        let size = CGSize(width: w, height: h)
+        let visibleFrame = panel.screen?.visibleFrame ?? visibleFrame(near: anchorTopLeft)
+        let size = PopupGeometry.constrainedSize(
+            CGSize(width: current.width + dx, height: current.height - dy),
+            minimum: minSize,
+            maximum: maxSize,
+            visibleFrame: visibleFrame
+        )
         layout.userSize = size
 
+        let frame = PopupGeometry.frame(topLeft: anchorTopLeft, size: size, visibleFrame: visibleFrame)
         isAdjusting = true
-        panel.setContentSize(size)
-        panel.setFrameTopLeftPoint(anchorTopLeft)
+        panel.setFrame(frame, display: true)
         isAdjusting = false
+        anchorTopLeft = NSPoint(x: frame.minX, y: frame.maxY)
 
-        UserDefaults.standard.set(w, forKey: "popupWidth")
-        UserDefaults.standard.set(h, forKey: "popupHeight")
+        UserDefaults.standard.set(size.width, forKey: "popupWidth")
+        UserDefaults.standard.set(size.height, forKey: "popupHeight")
     }
 
-    /// Top-left corner for a popup placed below-right of `point`, flipped above
-    /// when there is no room below, clamped to the visible screen.
-    private func anchor(near point: NSPoint, height: CGFloat) -> NSPoint {
-        let w = layout.userSize?.width ?? defaultWidth
-        var x = point.x + 12
-        var topY = point.y - 12
-
+    private func visibleFrame(near point: NSPoint) -> NSRect {
         let screen = NSScreen.screens.first { $0.frame.contains(point) } ?? NSScreen.main
-        if let visible = screen?.visibleFrame {
-            if x + w > visible.maxX { x = visible.maxX - w - 8 }
-            if x < visible.minX { x = visible.minX + 8 }
-            if topY - height < visible.minY { topY = point.y + height + 12 }
-            if topY > visible.maxY { topY = visible.maxY - 8 }
-        }
-        return NSPoint(x: x, y: topY)
+        return screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: maxSize.width + 16, height: maxSize.height + 16)
     }
 
     // MARK: - Dismissal

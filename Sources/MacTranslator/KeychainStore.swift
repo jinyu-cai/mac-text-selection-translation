@@ -1,6 +1,16 @@
 import Foundation
 import Security
 
+struct KeychainStoreError: LocalizedError {
+    let operation: String
+    let status: OSStatus
+
+    var errorDescription: String? {
+        let detail = SecCopyErrorMessageString(status, nil) as String? ?? "OSStatus \(status)"
+        return "钥匙串\(operation)失败：\(detail)"
+    }
+}
+
 /// Minimal generic-password storage so API keys live in the user's Keychain
 /// instead of plaintext UserDefaults.
 enum KeychainStore {
@@ -14,20 +24,26 @@ enum KeychainStore {
         }
     }
 
-    static func string(for account: String) -> String? {
+    static func string(for account: String) throws -> String? {
         var query = baseQuery(account: account)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
-        guard status == errSecSuccess, let data = item as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess else {
+            throw KeychainStoreError(operation: "读取", status: status)
+        }
+        guard let data = item as? Data, let value = String(data: data, encoding: .utf8) else {
+            throw KeychainStoreError(operation: "解码", status: errSecDecode)
+        }
+        return value
     }
 
     /// Saves `value` for `account`; an empty value removes the entry.
-    static func set(_ value: String, for account: String) {
+    static func set(_ value: String, for account: String) throws {
         guard !value.isEmpty else {
-            delete(account: account)
+            try delete(account: account)
             return
         }
         let data = Data(value.utf8)
@@ -38,12 +54,20 @@ enum KeychainStore {
         if status == errSecItemNotFound {
             var attributes = baseQuery(account: account)
             attributes[kSecValueData as String] = data
-            SecItemAdd(attributes as CFDictionary, nil)
+            let addStatus = SecItemAdd(attributes as CFDictionary, nil)
+            guard addStatus == errSecSuccess else {
+                throw KeychainStoreError(operation: "写入", status: addStatus)
+            }
+        } else if status != errSecSuccess {
+            throw KeychainStoreError(operation: "更新", status: status)
         }
     }
 
-    static func delete(account: String) {
-        SecItemDelete(baseQuery(account: account) as CFDictionary)
+    static func delete(account: String) throws {
+        let status = SecItemDelete(baseQuery(account: account) as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw KeychainStoreError(operation: "删除", status: status)
+        }
     }
 
     private static func baseQuery(account: String) -> [String: Any] {

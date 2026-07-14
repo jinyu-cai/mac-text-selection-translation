@@ -10,6 +10,11 @@ final class AppSettings: ObservableObject {
     /// All configured AI backends. Each enabled one runs on every translation.
     @Published var backends: [Backend] { didSet { saveBackends() } }
 
+    /// Non-persistent operational errors that need to be visible in Settings.
+    @Published private(set) var credentialError: String?
+    @Published var hotkeyRegistrationError: String?
+    @Published var ocrHotkeyRegistrationError: String?
+
     @Published var targetLanguage: String { didSet { defaults.set(targetLanguage, forKey: Keys.targetLanguage) } }
     @Published var customPrompt: String { didSet { defaults.set(customPrompt, forKey: Keys.customPrompt) } }
     @Published var enableHotkey: Bool { didSet { defaults.set(enableHotkey, forKey: Keys.enableHotkey) } }
@@ -19,7 +24,9 @@ final class AppSettings: ObservableObject {
     @Published var enableNotes: Bool { didSet { defaults.set(enableNotes, forKey: Keys.enableNotes) } }
     @Published var enableMicrosoftDictionary: Bool { didSet { defaults.set(enableMicrosoftDictionary, forKey: Keys.enableMicrosoftDictionary) } }
     @Published var microsoftTranslatorEndpoint: String { didSet { defaults.set(microsoftTranslatorEndpoint, forKey: Keys.microsoftTranslatorEndpoint) } }
-    @Published var microsoftTranslatorKey: String { didSet { KeychainStore.set(microsoftTranslatorKey, for: KeychainStore.Account.microsoftTranslatorKey) } }
+    @Published var microsoftTranslatorKey: String {
+        didSet { persistMicrosoftTranslatorKey() }
+    }
     @Published var microsoftTranslatorRegion: String { didSet { defaults.set(microsoftTranslatorRegion, forKey: Keys.microsoftTranslatorRegion) } }
     @Published var microsoftDictionaryFromLanguage: String { didSet { defaults.set(microsoftDictionaryFromLanguage, forKey: Keys.microsoftDictionaryFromLanguage) } }
     @Published var microsoftDictionaryToLanguage: String { didSet { defaults.set(microsoftDictionaryToLanguage, forKey: Keys.microsoftDictionaryToLanguage) } }
@@ -28,7 +35,12 @@ final class AppSettings: ObservableObject {
     @Published var ocrHotkeyKeyCode: Int { didSet { defaults.set(ocrHotkeyKeyCode, forKey: Keys.ocrHotkeyKeyCode) } }
     @Published var ocrHotkeyModifiers: Int { didSet { defaults.set(ocrHotkeyModifiers, forKey: Keys.ocrHotkeyModifiers) } }
 
+    private var backendCredentialError: String?
+    private var microsoftCredentialError: String?
+
     private init() {
+        var startupCredentialError: String?
+
         defaults.register(defaults: [
             Keys.targetLanguage: "中文",
             Keys.enableHotkey: true,
@@ -56,12 +68,26 @@ final class AppSettings: ObservableObject {
         enableNotes = defaults.bool(forKey: Keys.enableNotes)
         enableMicrosoftDictionary = defaults.bool(forKey: Keys.enableMicrosoftDictionary)
         microsoftTranslatorEndpoint = defaults.string(forKey: Keys.microsoftTranslatorEndpoint) ?? "https://api.cognitive.microsofttranslator.com"
-        // One-time migration of the plaintext key out of UserDefaults.
-        if let legacy = defaults.string(forKey: Keys.microsoftTranslatorKey), !legacy.isEmpty {
-            KeychainStore.set(legacy, for: KeychainStore.Account.microsoftTranslatorKey)
+        // One-time migration of the plaintext key out of UserDefaults. Never
+        // delete the recoverable copy unless the Keychain write succeeded.
+        let legacyMicrosoftKey = defaults.string(forKey: Keys.microsoftTranslatorKey)
+        if let legacyMicrosoftKey, !legacyMicrosoftKey.isEmpty {
+            do {
+                try KeychainStore.set(legacyMicrosoftKey, for: KeychainStore.Account.microsoftTranslatorKey)
+                defaults.removeObject(forKey: Keys.microsoftTranslatorKey)
+                microsoftTranslatorKey = legacyMicrosoftKey
+            } catch {
+                startupCredentialError = Self.credentialMessage("微软 Translator Key", error)
+                microsoftTranslatorKey = legacyMicrosoftKey
+            }
+        } else {
+            do {
+                microsoftTranslatorKey = try KeychainStore.string(for: KeychainStore.Account.microsoftTranslatorKey) ?? ""
+            } catch {
+                startupCredentialError = Self.credentialMessage("微软 Translator Key", error)
+                microsoftTranslatorKey = ""
+            }
         }
-        defaults.removeObject(forKey: Keys.microsoftTranslatorKey)
-        microsoftTranslatorKey = KeychainStore.string(for: KeychainStore.Account.microsoftTranslatorKey) ?? ""
         microsoftTranslatorRegion = defaults.string(forKey: Keys.microsoftTranslatorRegion) ?? ""
         microsoftDictionaryFromLanguage = defaults.string(forKey: Keys.microsoftDictionaryFromLanguage) ?? "en"
         microsoftDictionaryToLanguage = defaults.string(forKey: Keys.microsoftDictionaryToLanguage) ?? "zh-Hans"
@@ -70,11 +96,27 @@ final class AppSettings: ObservableObject {
         ocrHotkeyKeyCode = defaults.integer(forKey: Keys.ocrHotkeyKeyCode)
         ocrHotkeyModifiers = defaults.integer(forKey: Keys.ocrHotkeyModifiers)
 
-        backends = Self.loadBackends(from: defaults)
-        // Persist the migrated/default set so it survives even without edits,
-        // and move any keys still sitting in old plaintext JSON into the Keychain.
-        saveBackends()
-        defaults.removeObject(forKey: "apiKey") // legacy single-backend key
+        let loadedBackends = Self.loadBackends(from: defaults)
+        backends = loadedBackends.backends
+        unavailableBackendKeyIDs = loadedBackends.unavailableKeyIDs
+        credentialError = nil
+        hotkeyRegistrationError = nil
+        ocrHotkeyRegistrationError = nil
+
+        // Persist only migrations/defaults. Existing sanitized settings do not
+        // need a launch-time rewrite, which also avoids touching a temporarily
+        // unavailable Keychain item.
+        if loadedBackends.needsMigration, saveBackends() {
+            defaults.removeObject(forKey: "apiKey") // legacy single-backend key
+        }
+        if !unavailableBackendKeyIDs.isEmpty, backendCredentialError == nil {
+            backendCredentialError = loadedBackends.readError
+            refreshCredentialError()
+        }
+        if let startupCredentialError {
+            microsoftCredentialError = startupCredentialError
+            refreshCredentialError()
+        }
     }
 
     // MARK: - Backends
@@ -106,15 +148,36 @@ final class AppSettings: ObservableObject {
     }
 
     func removeBackend(_ backend: Backend) {
-        KeychainStore.delete(account: KeychainStore.Account.backendKey(backend.id))
-        backends.removeAll { $0.id == backend.id }
+        do {
+            try KeychainStore.delete(account: KeychainStore.Account.backendKey(backend.id))
+            unavailableBackendKeyIDs.remove(backend.id)
+            backends.removeAll { $0.id == backend.id }
+            backendCredentialError = nil
+            refreshCredentialError()
+        } catch {
+            backendCredentialError = Self.credentialMessage("\(backend.name) 的 API Key", error)
+            refreshCredentialError()
+        }
     }
 
     /// Persists the backends: keys go to the Keychain, everything else to
     /// UserDefaults (with the apiKey field blanked in the stored JSON).
-    private func saveBackends() {
+    @discardableResult
+    private func saveBackends() -> Bool {
         for backend in backends {
-            KeychainStore.set(backend.apiKey, for: KeychainStore.Account.backendKey(backend.id))
+            // If a read failed at launch, an empty in-memory value does not mean
+            // the user cleared the key. Preserve the existing Keychain item.
+            if unavailableBackendKeyIDs.contains(backend.id), backend.apiKey.isEmpty {
+                continue
+            }
+            do {
+                try KeychainStore.set(backend.apiKey, for: KeychainStore.Account.backendKey(backend.id))
+                unavailableBackendKeyIDs.remove(backend.id)
+            } catch {
+                backendCredentialError = Self.credentialMessage("\(backend.name) 的 API Key", error)
+                refreshCredentialError()
+                return false
+            }
         }
         var sanitized = backends
         for index in sanitized.indices {
@@ -122,28 +185,91 @@ final class AppSettings: ObservableObject {
         }
         if let data = try? JSONEncoder().encode(sanitized) {
             defaults.set(data, forKey: Keys.backends)
+            backendCredentialError = nil
+            refreshCredentialError()
+            return true
         }
+        backendCredentialError = "后端配置编码失败，修改尚未保存。"
+        refreshCredentialError()
+        return false
     }
 
     /// Loads backends from JSON, or migrates the old single-backend config.
-    private static func loadBackends(from defaults: UserDefaults) -> [Backend] {
+    private static func loadBackends(from defaults: UserDefaults) -> LoadedBackends {
         if let data = defaults.data(forKey: Keys.backends),
            var decoded = try? JSONDecoder().decode([Backend].self, from: data) {
+            var unavailableKeyIDs: Set<UUID> = []
+            var readError: String?
+            let needsMigration = decoded.contains { !$0.apiKey.isEmpty }
             for index in decoded.indices {
                 // Keys live in the Keychain; JSON only carries them in the
                 // pre-Keychain format, which the next save migrates over.
-                if let stored = KeychainStore.string(for: KeychainStore.Account.backendKey(decoded[index].id)),
-                   !stored.isEmpty {
-                    decoded[index].apiKey = stored
+                do {
+                    if let stored = try KeychainStore.string(for: KeychainStore.Account.backendKey(decoded[index].id)),
+                       !stored.isEmpty {
+                        decoded[index].apiKey = stored
+                    }
+                } catch {
+                    unavailableKeyIDs.insert(decoded[index].id)
+                    if readError == nil {
+                        readError = credentialReadMessage("\(decoded[index].name) 的 API Key", error)
+                    }
                 }
             }
-            return decoded
+            return LoadedBackends(
+                backends: decoded,
+                unavailableKeyIDs: unavailableKeyIDs,
+                needsMigration: needsMigration,
+                readError: readError
+            )
         }
         // Migration: turn the old single apiBaseURL/apiKey/model into one backend.
         let url = defaults.string(forKey: "apiBaseURL") ?? "https://api.openai.com/v1"
         let key = defaults.string(forKey: "apiKey") ?? ""
         let model = defaults.string(forKey: "model") ?? "gpt-4o-mini"
-        return [Backend(name: "OpenAI", baseURL: url, apiKey: key, model: model, isEnabled: true)]
+        return LoadedBackends(
+            backends: [Backend(name: "OpenAI", baseURL: url, apiKey: key, model: model, isEnabled: true)],
+            unavailableKeyIDs: [],
+            needsMigration: true,
+            readError: nil
+        )
+    }
+
+    private var unavailableBackendKeyIDs: Set<UUID> = []
+
+    private struct LoadedBackends {
+        var backends: [Backend]
+        var unavailableKeyIDs: Set<UUID>
+        var needsMigration: Bool
+        var readError: String?
+    }
+
+    private func persistMicrosoftTranslatorKey() {
+        do {
+            try KeychainStore.set(
+                microsoftTranslatorKey,
+                for: KeychainStore.Account.microsoftTranslatorKey
+            )
+            microsoftCredentialError = nil
+            refreshCredentialError()
+        } catch {
+            microsoftCredentialError = Self.credentialMessage("微软 Translator Key", error)
+            refreshCredentialError()
+        }
+    }
+
+    private func refreshCredentialError() {
+        credentialError = microsoftCredentialError ?? backendCredentialError
+    }
+
+    private static func credentialMessage(_ label: String, _ error: Error) -> String {
+        let detail = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        return "\(label) 未能保存。\(detail)"
+    }
+
+    private static func credentialReadMessage(_ label: String, _ error: Error) -> String {
+        let detail = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        return "\(label) 无法读取。\(detail)"
     }
 
     // MARK: - Derived values

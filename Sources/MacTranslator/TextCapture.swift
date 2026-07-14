@@ -1,4 +1,5 @@
 import AppKit
+import MacTranslatorCore
 
 /// Grabs the currently selected text from whatever app is frontmost by
 /// posting a synthetic ⌘C and reading the pasteboard, then (optionally)
@@ -6,12 +7,18 @@ import AppKit
 enum TextCapture {
     @MainActor
     static func captureSelectedText(restore: Bool) async -> String? {
+        guard !Task.isCancelled else { return nil }
+
         // If a mouse button is still down (e.g. the hotkey fired mid-drag),
         // wait for the release (up to ~1s) so the ⌘C lands on the finished
         // selection instead of in the middle of the drag.
         for _ in 0..<40 {
             guard NSEvent.pressedMouseButtons != 0 else { break }
-            try? await Task.sleep(nanoseconds: 25_000_000)
+            do {
+                try await Task.sleep(nanoseconds: 25_000_000)
+            } catch {
+                return nil
+            }
         }
 
         let pasteboard = NSPasteboard.general
@@ -22,34 +29,30 @@ enum TextCapture {
 
         // Poll for the pasteboard to change (up to ~450ms).
         var captured: String?
+        var capturedChangeCount: Int?
         for _ in 0..<30 {
-            try? await Task.sleep(nanoseconds: 15_000_000)
+            do {
+                try await Task.sleep(nanoseconds: 15_000_000)
+            } catch {
+                return nil
+            }
             if pasteboard.changeCount != previousChangeCount {
                 captured = pasteboard.string(forType: .string)
+                capturedChangeCount = pasteboard.changeCount
                 break
             }
         }
 
-        if let saved {
-            if captured != nil {
-                restoreItems(pasteboard, from: saved)
-            } else if pasteboard.changeCount == previousChangeCount {
-                // Nothing was copied within the window, but a slow app may
-                // still deliver the ⌘C after we gave up — watch briefly and
-                // put the previous contents back if that happens. If nothing
-                // ever lands, the pasteboard was untouched: no restore needed.
-                Task { @MainActor in
-                    for _ in 0..<12 {
-                        try? await Task.sleep(nanoseconds: 50_000_000)
-                        if pasteboard.changeCount != previousChangeCount {
-                            restoreItems(pasteboard, from: saved)
-                            return
-                        }
-                    }
-                }
-            } else {
-                restoreItems(pasteboard, from: saved)
-            }
+        // Restore only the exact pasteboard generation we observed from the
+        // synthetic copy. A later generation may be an intentional user copy
+        // and must never be overwritten. Do not run a delayed restore after a
+        // timeout because its origin can no longer be distinguished safely.
+        if let saved,
+           ClipboardRestorePolicy.shouldRestore(
+               capturedChangeCount: capturedChangeCount,
+               currentChangeCount: pasteboard.changeCount
+           ) {
+            restoreItems(pasteboard, from: saved)
         }
 
         return captured?.trimmingCharacters(in: .whitespacesAndNewlines)

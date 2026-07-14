@@ -65,6 +65,7 @@ make install  # 编译 + 打包 + 安装到 /Applications + 启动
 ```bash
 make run    # 编译 + 打包成当前目录下的 .app + 启动
 make build  # 仅编译
+make test   # 运行可靠性回归测试
 make app    # 仅打包出「Text Selection Translation.app」
 make clean
 ```
@@ -108,6 +109,9 @@ make clean
 ## 项目结构
 
 ```
+Sources/MacTranslatorCore/
+└─ ReliabilityPolicies.swift  剪贴板、登录项和浮窗边界的可测试纯逻辑
+
 Sources/MacTranslator/
 ├─ App.swift              入口：菜单栏 (MenuBarExtra) + 设置场景
 ├─ AppDelegate.swift      生命周期、把快捷键/浮标接到翻译入口、辅助功能授权
@@ -122,6 +126,9 @@ Sources/MacTranslator/
 ├─ FloatingIcon.swift     选中后的浮动小按钮
 ├─ SettingsView.swift     设置界面 + 快捷键录制
 └─ KeyCodes.swift         键码 → 显示字符
+
+Tests/MacTranslatorTests/
+└─ ReliabilityTests.swift 零第三方依赖的回归测试入口（make test）
 ```
 
 ## 已知限制 / 可继续做

@@ -11,6 +11,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let popup = PopupController()
     private let icon = FloatingIconController()
     private let ocr = OCRTextCapture.shared
+    private var selectionTask: Task<Void, Never>?
+    private var selectionRequestID: UUID?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -31,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        selectionTask?.cancel()
         NoteStore.shared.flush()
     }
 
@@ -50,26 +53,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Safe to call repeatedly — used both at launch and whenever settings change.
     func configureTriggers() {
         if settings.enableHotkey {
-            hotKey.register(
+            let registered = hotKey.register(
                 keyCode: UInt32(settings.hotkeyKeyCode),
                 modifiers: settings.hotkeyCarbonModifiers
             ) { [weak self] in
                 guard let self else { return }
                 self.translate(at: NSEvent.mouseLocation)
             }
+            settings.hotkeyRegistrationError = registered ? nil :
+                "划词快捷键注册失败，可能与系统或其他应用的快捷键冲突。"
         } else {
             hotKey.unregister()
+            settings.hotkeyRegistrationError = nil
         }
 
         if settings.enableOCRHotkey {
-            ocrHotKey.register(
+            let registered = ocrHotKey.register(
                 keyCode: UInt32(settings.ocrHotkeyKeyCode),
                 modifiers: settings.ocrHotkeyCarbonModifiers
             ) { [weak self] in
                 self?.translateScreenshotOCR()
             }
+            settings.ocrHotkeyRegistrationError = registered ? nil :
+                "OCR 快捷键注册失败，可能与系统或其他应用的快捷键冲突。"
         } else {
             ocrHotKey.unregister()
+            settings.ocrHotkeyRegistrationError = nil
         }
 
         if settings.enableFloatingIcon {
@@ -98,16 +107,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        Task {
+        // Serialise pasteboard access. Two overlapping synthetic copies can
+        // capture/restore each other's content and show results out of order.
+        guard selectionTask == nil else { return }
+        let requestID = UUID()
+        selectionRequestID = requestID
+        selectionTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.finishSelectionRequest(requestID) }
             guard let text = await TextCapture.captureSelectedText(restore: settings.restoreClipboard),
-                  !text.isEmpty
+                  !text.isEmpty,
+                  !Task.isCancelled
             else {
+                guard !Task.isCancelled else { return }
                 popup.showNotice("没有取到选中的文字。\n请先选中文本，或改用菜单栏里的「截图 OCR 翻译…」。", at: point)
                 return
             }
             guard hasLookupProvider(at: point) else { return }
             popup.show(text: text, at: point, settings: settings)
         }
+    }
+
+    private func finishSelectionRequest(_ requestID: UUID) {
+        guard selectionRequestID == requestID else { return }
+        selectionTask = nil
+        selectionRequestID = nil
     }
 
     /// Translates whatever string is currently on the clipboard.
