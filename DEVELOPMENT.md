@@ -495,7 +495,12 @@ SMAppService.mainApp.status         // .enabled / .notRegistered / .requiresAppr
 ### 9.1 请求
 - 端点：`{baseURL}/chat/completions`（代码会自动去掉 baseURL 尾部 `/` 再拼）。
 - 头：`Authorization: Bearer <key>`、`Content-Type: application/json`。
-- 体：`{ model, stream: true, temperature, messages: [{role:system,...},{role:user,...}] }`。
+- 体：`{ model, stream: true, reasoning_effort?, temperature?, messages: [{role:system,...},{role:user,...}] }`。
+- 所有后端统一使用 OpenAI Chat Completions 字段：思考强度是顶层
+  `reasoning_effort`，不发送 OpenRouter 私有的 `reasoning` 对象。GPT-5.5
+  和 GPT-5.6 保留 `temperature`；GPT-5.1、GPT-5.2 和 GPT-5.4 只在明确
+  关闭推理（`reasoning_effort: none`）时发送；更早的 GPT-5、GPT-5 Codex
+  和 o 系列模型省略不兼容的 `temperature`。
 - 因为是 OpenAI **标准**接口，所以 OpenAI / DeepSeek / Kimi / Ollama / LM Studio 等都能接，只改 baseURL / key / model。
 
 ### 9.2 SSE 流式解析

@@ -97,6 +97,7 @@ make clean
 | Base URL | 接口前缀，会自动拼上 `/chat/completions`。如 `https://api.openai.com/v1`、`http://localhost:11434/v1`（Ollama） |
 | API Key | `Bearer` 鉴权；本地服务可留空 |
 | 模型 | 如 `gpt-4o-mini`、`deepseek-chat`、`qwen2.5:7b` |
+| 思考能力 | 按 OpenAI Chat Completions 规范发送 `reasoning_effort`；支持关闭、低、中、高、极高和最大，“自动”使用模型默认值 |
 | 微软词典 | 开启后填写 Translator Endpoint / Key / Region，以及源语言和目标语言代码（默认 `en` → `zh-Hans`） |
 | 截图 OCR | 菜单栏里启动；适合在线电子书、图片或禁止复制的网页文字 |
 | 笔记 | 开启后浮窗显示保存按钮，菜单栏可打开笔记窗口 |
@@ -110,7 +111,8 @@ make clean
 
 ```
 Sources/MacTranslatorCore/
-└─ ReliabilityPolicies.swift  剪贴板、登录项和浮窗边界的可测试纯逻辑
+├─ ChatCompletionRequestPolicy.swift  全后端统一的 OpenAI 高级参数映射
+└─ ReliabilityPolicies.swift          剪贴板、登录项和浮窗边界的可测试纯逻辑
 
 Sources/MacTranslator/
 ├─ App.swift              入口：菜单栏 (MenuBarExtra) + 设置场景

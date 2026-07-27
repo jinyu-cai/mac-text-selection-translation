@@ -1,4 +1,5 @@
 import Foundation
+import MacTranslatorCore
 
 enum TranslationError: LocalizedError {
     case invalidURL
@@ -56,20 +57,17 @@ struct OpenAIClient {
         var body: [String: Any] = [
             "model": model,
             "stream": stream,
-            "temperature": 0.2,
             "messages": [
                 ["role": "system", "content": systemPrompt],
                 ["role": "user", "content": text],
             ],
         ]
-        // OpenRouter's unified reasoning control. `.auto` sends nothing so
-        // backends that don't understand it are unaffected.
-        switch reasoning {
-        case .auto: break
-        case .off: body["reasoning"] = ["enabled": false]
-        case .low: body["reasoning"] = ["effort": "low"]
-        case .medium: body["reasoning"] = ["effort": "medium"]
-        case .high: body["reasoning"] = ["effort": "high"]
+        let advancedParameters = ChatCompletionRequestPolicy.parameters(
+            model: model,
+            reasoning: reasoning.rawValue
+        )
+        for (key, value) in advancedParameters {
+            body[key] = value
         }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         return request

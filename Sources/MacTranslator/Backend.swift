@@ -1,10 +1,11 @@
 import Foundation
 
 /// How much "thinking / reasoning" a backend's model should do.
-/// `auto` sends nothing (model default); the others map to OpenRouter's unified
-/// `reasoning` parameter. Most translation tasks are faster with `off`.
+/// `auto` sends nothing (model default); the others map to OpenAI Chat
+/// Completions' `reasoning_effort` parameter. Most translation tasks are
+/// faster with `off`.
 enum ReasoningMode: String, Codable, CaseIterable, Identifiable {
-    case auto, off, low, medium, high
+    case auto, off, low, medium, high, xhigh, max
 
     var id: String { rawValue }
 
@@ -15,6 +16,8 @@ enum ReasoningMode: String, Codable, CaseIterable, Identifiable {
         case .low: return "低"
         case .medium: return "中"
         case .high: return "高"
+        case .xhigh: return "极高"
+        case .max: return "最大"
         }
     }
 }
