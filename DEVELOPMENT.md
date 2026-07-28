@@ -125,7 +125,7 @@ let package = Package(
 BUNDLE  = Text Selection Translation.app
 BIN     = MacTranslator
 CONFIG ?= release
-SIGN_ID ?= $(shell security find-identity -p codesigning 2>/dev/null | grep -q "MacTranslator Dev" && echo "MacTranslator Dev" || echo "-")
+SIGN_ID ?= $(shell security find-certificate -c "MacTranslator Dev" >/dev/null 2>&1 && echo "MacTranslator Dev" || echo "-")
 
 build:
 	swift build -c $(CONFIG)
@@ -147,7 +147,7 @@ app: build
   Foo.app/Contents/Resources/...
   ```
   Makefile 的 `app` 目标就是手工拼这个结构。
-- `SIGN_ID ?= $(shell ...)`：用 `?=`（仅当未设置时赋值）+ `$(shell ...)`（构建时执行命令）**自动探测**有没有自签名证书，有就用、没有就退回 ad-hoc（`-`）。详见[第 8.7 节](#87-代码签名为什么它和权限挂钩)。
+- `SIGN_ID ?= $(shell ...)`：用 `?=`（仅当未设置时赋值）+ `$(shell ...)`（构建时执行命令）**直接探测证书**，有就用、没有就退回 ad-hoc（`-`）。这里不依赖 `find-identity` 的“有效身份”列表，因为未加入系统信任的本地自签名证书仍然可以稳定签名。详见[第 8.7 节](#87-代码签名为什么它和权限挂钩)。
 
 ### 2.3 `Info.plist`
 
@@ -172,7 +172,7 @@ app: build
 
 ### `AppDelegate.swift` — 协调器
 - `@MainActor final class AppDelegate: NSObject, NSApplicationDelegate`：整个类跑在主线程（见[第 7 节](#7-并发asyncawait-与-actor)）。
-- `applicationDidFinishLaunching`：启动时设 `NSApp.setActivationPolicy(.accessory)`、接线、申请权限。
+- `applicationDidFinishLaunching`：启动时设 `NSApp.setActivationPolicy(.accessory)` 并接线；登录启动路径不主动弹权限窗口。
 - `translate(at:)`：翻译总入口——先查权限，再异步取词，再弹窗。
 - 把 4 个组件（hotKey / watcher / popup / icon）用闭包接到一起，是「依赖注入 + 回调」的范式。
 
@@ -487,6 +487,7 @@ SMAppService.mainApp.status         // .enabled / .notRegistered / .requiresAppr
   它**基于证书、不随重建变化** → 授权一次后，反复 `make app` 也不掉权限。
 - 证书脚本的两个坑（已规避）：必须用系统 `/usr/bin/openssl`（LibreSSL，Homebrew 的 OpenSSL 3 导出的 p12 钥匙串认不了）；p12 传输密码不能为空。
 - 首次用证书签名会弹「钥匙串授权」框，点一次「始终允许」后永久静默。
+- API Key 的启动读取通过 `LAContext.interactionNotAllowed = true` 禁止交互。旧签名创建的钥匙串 ACL 即使已失效，也只会返回错误并在设置中提示，不会在登录时按后端数量连续弹密码框；可访问的旧条目会迁移到版本化的新 service。
 
 ---
 
@@ -516,7 +517,7 @@ data: [DONE]
 `AppSettings.effectiveSystemPrompt()`：默认「翻译成目标语言；若已是目标语言则翻成英文；只输出译文」。允许用户用自定义 prompt 完全覆盖。
 
 ### 9.4 多后端并行对比
-- `AppSettings.backends: [Backend]`，每个后端独立的 URL/key/模型/启用开关；以 JSON 存 UserDefaults（旧的单配置会自动迁移成第一个后端）。
+- `AppSettings.backends: [Backend]`，每个后端独立的 URL/key/模型/启用开关；以 JSON 存 UserDefaults（旧的单配置会自动迁移成第一个后端）。数组顺序也是浮窗结果卡的显示顺序，设置页的上下箭头通过 `ListOrderingPolicy` 安全重排并立即持久化。
 - 翻译时 `TranslationSession` 对**所有启用的后端**各开一个 `Task`，每个独立流式；浮窗里每个后端一张 `ResultCard`，可分别复制、各自显示加载/错误。
 - 这是「同一输入 → 多模型并行 → 同屏对比」的范式：因为接口都是 OpenAI 兼容，加一个后端只是多一条配置，不用改翻译逻辑。设置界面用 `ForEach($settings.backends)`（**绑定遍历**）实现增删改。
 
@@ -657,7 +658,7 @@ JSON
 - 习惯：**合并前**对 PR 跑一次审查。
 
 ### 12.4 签名与公证（分发时）
-- 自用/本机：ad-hoc 或自签名即可。
+- 自用/本机的一次性运行可用 ad-hoc；启用辅助功能、钥匙串和开机自启时应使用稳定自签名。
 - 要给别人用、过 Gatekeeper：需要 **Apple Developer ID** 证书签名 + **公证（notarization）**（`xcrun notarytool`）。本项目目前是本地自签名，**不可被他人直接信任运行**。
 
 ### 12.5 权限最小化
@@ -689,6 +690,12 @@ JSON
 6. **commit 挂到了错的 GitHub 账号** → 全局 `git config` 邮箱是另一个账号（见 [10.5](#105-git-身份管理重要一课)）。
 
 7. **OpenSSL 3 导出的 p12 钥匙串认不了** → 用系统 `/usr/bin/openssl`（LibreSSL）+ 非空 p12 密码。
+
+8. **开机后连续弹多个钥匙串密码框** → App 启动时逐个读取后端 API Key，而旧发布包的 ad-hoc 签名让每个条目的应用 ACL 都失效。
+   修法：启动读取禁止系统交互，旧条目静默迁移到新的 service；本地构建直接检测并复用稳定证书，避免错误退回 ad-hoc。
+
+9. **权限被移除后每次登录都弹辅助功能提示** → 启动回调无条件调用了带 `Prompt` 的 TCC 检查。
+   修法：登录启动只做无界面的初始化；等用户主动触发划词翻译时再请求辅助功能权限。
 
 ---
 

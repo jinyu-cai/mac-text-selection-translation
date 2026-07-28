@@ -1,13 +1,14 @@
 BUNDLE  = Text Selection Translation.app
 BIN     = MacTranslator
 CONFIG ?= release
-VERSION ?= 1.0.4
+VERSION ?= 1.0.5
 BUILD_VERSION ?= $(shell /bin/date +%Y%m%d%H%M%S)
 # Code-signing identity. Auto-uses the stable self-signed "MacTranslator Dev"
-# cert when present (so the Accessibility grant survives rebuilds); otherwise
-# falls back to ad-hoc "-". Create the cert once: ./scripts/create-signing-cert.sh
+# certificate when present (even if it is not a system-trusted identity), so
+# Accessibility and Keychain ACLs survive rebuilds. Otherwise falls back to
+# ad-hoc "-". Create the cert once: ./scripts/create-signing-cert.sh
 # Override explicitly with: make app SIGN_ID="Your Identity"
-SIGN_ID ?= $(shell security find-identity -p codesigning 2>/dev/null | grep -q "MacTranslator Dev" && echo "MacTranslator Dev" || echo "-")
+SIGN_ID ?= $(shell security find-certificate -c "MacTranslator Dev" >/dev/null 2>&1 && echo "MacTranslator Dev" || echo "-")
 
 .PHONY: build test app run install clean clean-app
 
@@ -23,7 +24,7 @@ test:
 clean-app:
 	rm -rf "$(BUNDLE)"
 
-## Assemble a runnable .app bundle (ad-hoc signed)
+## Assemble a runnable .app bundle
 app: clean-app
 	$(MAKE) build CONFIG="$(CONFIG)"
 	mkdir -p "$(BUNDLE)/Contents/MacOS"

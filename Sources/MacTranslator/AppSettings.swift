@@ -1,5 +1,6 @@
 import AppKit
 import Carbon.HIToolbox
+import MacTranslatorCore
 
 /// User-facing configuration, persisted to `UserDefaults`.
 final class AppSettings: ObservableObject {
@@ -73,7 +74,11 @@ final class AppSettings: ObservableObject {
         let legacyMicrosoftKey = defaults.string(forKey: Keys.microsoftTranslatorKey)
         if let legacyMicrosoftKey, !legacyMicrosoftKey.isEmpty {
             do {
-                try KeychainStore.set(legacyMicrosoftKey, for: KeychainStore.Account.microsoftTranslatorKey)
+                try KeychainStore.set(
+                    legacyMicrosoftKey,
+                    for: KeychainStore.Account.microsoftTranslatorKey,
+                    interaction: .suppress
+                )
                 defaults.removeObject(forKey: Keys.microsoftTranslatorKey)
                 microsoftTranslatorKey = legacyMicrosoftKey
             } catch {
@@ -82,7 +87,10 @@ final class AppSettings: ObservableObject {
             }
         } else {
             do {
-                microsoftTranslatorKey = try KeychainStore.string(for: KeychainStore.Account.microsoftTranslatorKey) ?? ""
+                microsoftTranslatorKey = try KeychainStore.string(
+                    for: KeychainStore.Account.microsoftTranslatorKey,
+                    interaction: .suppress
+                ) ?? ""
             } catch {
                 startupCredentialError = Self.credentialMessage("微软 Translator Key", error)
                 microsoftTranslatorKey = ""
@@ -106,7 +114,7 @@ final class AppSettings: ObservableObject {
         // Persist only migrations/defaults. Existing sanitized settings do not
         // need a launch-time rewrite, which also avoids touching a temporarily
         // unavailable Keychain item.
-        if loadedBackends.needsMigration, saveBackends() {
+        if loadedBackends.needsMigration, saveBackends(interaction: .suppress) {
             defaults.removeObject(forKey: "apiKey") // legacy single-backend key
         }
         if !unavailableBackendKeyIDs.isEmpty, backendCredentialError == nil {
@@ -147,6 +155,19 @@ final class AppSettings: ObservableObject {
         backends.append(.makeNew())
     }
 
+    /// Moves a backend by one or more positions. The stored array is the source
+    /// of truth for both request creation and top-to-bottom result card order.
+    func moveBackend(id: UUID, by offset: Int) {
+        guard let sourceIndex = backends.firstIndex(where: { $0.id == id }) else { return }
+        let destinationIndex = sourceIndex + offset
+        guard backends.indices.contains(destinationIndex) else { return }
+        backends = ListOrderingPolicy.moving(
+            backends,
+            from: sourceIndex,
+            to: destinationIndex
+        )
+    }
+
     func removeBackend(_ backend: Backend) {
         do {
             try KeychainStore.delete(account: KeychainStore.Account.backendKey(backend.id))
@@ -163,7 +184,9 @@ final class AppSettings: ObservableObject {
     /// Persists the backends: keys go to the Keychain, everything else to
     /// UserDefaults (with the apiKey field blanked in the stored JSON).
     @discardableResult
-    private func saveBackends() -> Bool {
+    private func saveBackends(
+        interaction: KeychainStore.Interaction = .allow
+    ) -> Bool {
         for backend in backends {
             // If a read failed at launch, an empty in-memory value does not mean
             // the user cleared the key. Preserve the existing Keychain item.
@@ -171,7 +194,11 @@ final class AppSettings: ObservableObject {
                 continue
             }
             do {
-                try KeychainStore.set(backend.apiKey, for: KeychainStore.Account.backendKey(backend.id))
+                try KeychainStore.set(
+                    backend.apiKey,
+                    for: KeychainStore.Account.backendKey(backend.id),
+                    interaction: interaction
+                )
                 unavailableBackendKeyIDs.remove(backend.id)
             } catch {
                 backendCredentialError = Self.credentialMessage("\(backend.name) 的 API Key", error)
@@ -205,7 +232,10 @@ final class AppSettings: ObservableObject {
                 // Keys live in the Keychain; JSON only carries them in the
                 // pre-Keychain format, which the next save migrates over.
                 do {
-                    if let stored = try KeychainStore.string(for: KeychainStore.Account.backendKey(decoded[index].id)),
+                    if let stored = try KeychainStore.string(
+                        for: KeychainStore.Account.backendKey(decoded[index].id),
+                        interaction: .suppress
+                    ),
                        !stored.isEmpty {
                         decoded[index].apiKey = stored
                     }

@@ -28,10 +28,11 @@ struct ReliabilityTests {
         testPopupSize(expect: expect)
         testGrowingPopup(expect: expect)
         testLoginItemState(expect: expect)
+        testListOrdering(expect: expect)
         testOpenAIRequestParameters(expect: expect)
 
         if failures.isEmpty {
-            print("All reliability tests passed (40 assertions).")
+            print("All reliability tests passed (45 assertions).")
         } else {
             for failure in failures { fputs("FAIL: \(failure)\n", stderr) }
             exit(1)
@@ -79,6 +80,30 @@ struct ReliabilityTests {
             "login item: notRegistered should be false"
         )
         expect(!LoginItemRegistrationPolicy.isRegistered(.notFound), "login item: notFound should be false")
+    }
+
+    private static func testListOrdering(expect: (Bool, String) -> Void) {
+        let items = ["first", "second", "third"]
+        expect(
+            ListOrderingPolicy.moving(items, from: 1, to: 0) == ["second", "first", "third"],
+            "ordering: moving up should place the selected item before its neighbor"
+        )
+        expect(
+            ListOrderingPolicy.moving(items, from: 1, to: 2) == ["first", "third", "second"],
+            "ordering: moving down should place the selected item after its neighbor"
+        )
+        expect(
+            ListOrderingPolicy.moving(items, from: 2, to: 0) == ["third", "first", "second"],
+            "ordering: moving to the top should preserve the other items' order"
+        )
+        expect(
+            ListOrderingPolicy.moving(items, from: -1, to: 0) == items,
+            "ordering: an invalid source index should be a no-op"
+        )
+        expect(
+            ListOrderingPolicy.moving(items, from: 0, to: items.count) == items,
+            "ordering: an invalid destination index should be a no-op"
+        )
     }
 
     private static func testOpenAIRequestParameters(expect: (Bool, String) -> Void) {

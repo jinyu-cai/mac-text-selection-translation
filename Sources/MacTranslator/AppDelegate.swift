@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import Combine
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -13,6 +14,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let ocr = OCRTextCapture.shared
     private var selectionTask: Task<Void, Never>?
     private var selectionRequestID: UUID?
+    private var triggerSettingsCancellable: AnyCancellable?
+    private var hotkeysPaused = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -28,8 +31,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.icon.hide()
         }
 
+        observeTriggerSettings()
         configureTriggers()
-        requestAccessibilityIfNeeded()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -41,6 +44,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// recording a new shortcut — otherwise the current combo is swallowed
     /// system-wide by the live registration and can never be re-recorded.
     func setHotkeysPaused(_ paused: Bool) {
+        guard hotkeysPaused != paused else { return }
+        hotkeysPaused = paused
         if paused {
             hotKey.unregister()
             ocrHotKey.unregister()
@@ -52,33 +57,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// (Re)wires the global hotkey and the selection watcher from current settings.
     /// Safe to call repeatedly — used both at launch and whenever settings change.
     func configureTriggers() {
-        if settings.enableHotkey {
-            let registered = hotKey.register(
-                keyCode: UInt32(settings.hotkeyKeyCode),
-                modifiers: settings.hotkeyCarbonModifiers
-            ) { [weak self] in
-                guard let self else { return }
-                self.translate(at: NSEvent.mouseLocation)
+        if !hotkeysPaused {
+            if settings.enableHotkey {
+                let registered = hotKey.register(
+                    keyCode: UInt32(settings.hotkeyKeyCode),
+                    modifiers: settings.hotkeyCarbonModifiers
+                ) { [weak self] in
+                    guard let self else { return }
+                    self.translate(at: NSEvent.mouseLocation)
+                }
+                settings.hotkeyRegistrationError = registered ? nil :
+                    "划词快捷键注册失败，可能与系统或其他应用的快捷键冲突。"
+            } else {
+                hotKey.unregister()
+                settings.hotkeyRegistrationError = nil
             }
-            settings.hotkeyRegistrationError = registered ? nil :
-                "划词快捷键注册失败，可能与系统或其他应用的快捷键冲突。"
-        } else {
-            hotKey.unregister()
-            settings.hotkeyRegistrationError = nil
-        }
 
-        if settings.enableOCRHotkey {
-            let registered = ocrHotKey.register(
-                keyCode: UInt32(settings.ocrHotkeyKeyCode),
-                modifiers: settings.ocrHotkeyCarbonModifiers
-            ) { [weak self] in
-                self?.translateScreenshotOCR()
+            if settings.enableOCRHotkey {
+                let registered = ocrHotKey.register(
+                    keyCode: UInt32(settings.ocrHotkeyKeyCode),
+                    modifiers: settings.ocrHotkeyCarbonModifiers
+                ) { [weak self] in
+                    self?.translateScreenshotOCR()
+                }
+                settings.ocrHotkeyRegistrationError = registered ? nil :
+                    "OCR 快捷键注册失败，可能与系统或其他应用的快捷键冲突。"
+            } else {
+                ocrHotKey.unregister()
+                settings.ocrHotkeyRegistrationError = nil
             }
-            settings.ocrHotkeyRegistrationError = registered ? nil :
-                "OCR 快捷键注册失败，可能与系统或其他应用的快捷键冲突。"
-        } else {
-            ocrHotKey.unregister()
-            settings.ocrHotkeyRegistrationError = nil
         }
 
         if settings.enableFloatingIcon {
@@ -87,6 +94,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             watcher.stop()
             icon.hide()
         }
+    }
+
+    /// Keeps trigger registration in sync even when settings are changed from
+    /// somewhere other than SettingsView. The short debounce also lets a
+    /// key-code/modifier pair settle before Carbon sees the new combination.
+    private func observeTriggerSettings() {
+        let changes: [AnyPublisher<Void, Never>] = [
+            settings.$enableHotkey.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            settings.$hotkeyKeyCode.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            settings.$hotkeyModifiers.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            settings.$enableOCRHotkey.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            settings.$ocrHotkeyKeyCode.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            settings.$ocrHotkeyModifiers.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            settings.$enableFloatingIcon.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+        ]
+
+        triggerSettingsCancellable = Publishers.MergeMany(changes)
+            .debounce(for: .milliseconds(20), scheduler: RunLoop.main)
+            .sink { [weak self] in
+                self?.configureTriggers()
+            }
     }
 
     // MARK: - Translation entry points
@@ -175,12 +203,4 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
-    // MARK: - Accessibility permission
-
-    private func requestAccessibilityIfNeeded() {
-        // Capturing the selection posts a synthetic ⌘C, which requires the
-        // Accessibility permission. Prompt the user the first time.
-        let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
-        _ = AXIsProcessTrustedWithOptions(options)
-    }
 }

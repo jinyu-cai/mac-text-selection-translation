@@ -29,7 +29,7 @@
 
 打开 GitHub Releases，下载最新的 `TextSelectionTranslation-*-macOS-universal.dmg`，双击后把 `Text Selection Translation.app` 拖到「应用程序」即可。
 
-首次打开如果 macOS 提示无法验证开发者，请在 Finder 里右键点击 App，选择「打开」，再确认打开。启动后按提示授予「辅助功能」权限；如果要用截图 OCR，还需要授予「屏幕录制」权限。
+首次打开如果 macOS 提示无法验证开发者，请在 Finder 里右键点击 App，选择「打开」，再确认打开。首次使用划词翻译时按提示授予「辅助功能」权限；如果要用截图 OCR，还需要授予「屏幕录制」权限。
 
 ### 从源码安装
 
@@ -72,19 +72,21 @@ make clean
 
 运行 `make app` 后，也可以直接 `open "Text Selection Translation.app"`，或把这个 `.app` 拖到「应用程序」里。
 
-> 签名身份：`make app` 会自动使用上面创建的 `MacTranslator Dev` 证书（找不到则退回 ad-hoc `-`）；也可手动指定 `make app SIGN_ID="Your Identity"`。
+> 签名身份：`make app` 会直接检查并使用上面创建的 `MacTranslator Dev` 证书（即使自签名证书未出现在“有效身份”列表中）；找不到才退回 ad-hoc `-`。也可手动指定 `make app SIGN_ID="Your Identity"`。
 
 ## 授权（重要）
 
 划词取词靠模拟 `⌘C` 实现，需要 **辅助功能** 权限：
 
-1. 首次启动会弹出授权提示；或打开 **系统设置 → 隐私与安全性 → 辅助功能**。
+1. 首次使用划词翻译会弹出授权提示；或打开 **系统设置 → 隐私与安全性 → 辅助功能**。
 2. 把「Text Selection Translation」加进列表并打开开关。
 3. **重新启动 App**（授权后必须重启进程才生效）。
 
 > 只要用 `MacTranslator Dev` 证书签名（默认即是），授权**一次**就够了——之后 `make app` 重新打包也不会掉权限，因为签名的「指定要求」基于证书而非每次都变的代码哈希。
 > 若改回 ad-hoc 签名（`-`），则每次重新打包后都要重新授权。
 > 改过名/换过签名方式后，记得先在列表里**删掉旧的残留条目**再重新授权。
+
+API Key 保存在 macOS 钥匙串。应用在开机自启阶段使用无交互读取，因此旧版签名留下的钥匙串权限即使失效，也不会再连续弹出多个登录密码窗口；可读取的旧条目会自动迁移。设置页若提示某个 Key 被跳过，只需重新输入一次，新值会写入新版独立的钥匙串命名空间。
 
 截图 OCR 需要 **屏幕录制** 权限：打开 **系统设置 → 隐私与安全性 → 屏幕录制**，把「Text Selection Translation」加进列表并打开开关。授权后如仍不可用，请重新启动 App。
 
@@ -98,6 +100,7 @@ make clean
 | API Key | `Bearer` 鉴权；本地服务可留空 |
 | 模型 | 如 `gpt-4o-mini`、`deepseek-chat`、`qwen2.5:7b` |
 | 思考能力 | 按 OpenAI Chat Completions 规范发送 `reasoning_effort`；支持关闭、低、中、高、极高和最大，“自动”使用模型默认值 |
+| 后端顺序 | 使用每个后端名称右侧的上下箭头排序；该顺序会保存，并决定浮窗结果卡从上到下的顺序 |
 | 微软词典 | 开启后填写 Translator Endpoint / Key / Region，以及源语言和目标语言代码（默认 `en` → `zh-Hans`） |
 | 截图 OCR | 菜单栏里启动；适合在线电子书、图片或禁止复制的网页文字 |
 | 笔记 | 开启后浮窗显示保存按钮，菜单栏可打开笔记窗口 |

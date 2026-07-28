@@ -14,6 +14,28 @@ public enum LoginItemRegistrationPolicy {
     }
 }
 
+public enum ListOrderingPolicy {
+    /// Returns a copy with one item moved to its final destination index.
+    /// Invalid indices are treated as a no-op so UI boundary actions stay safe.
+    public static func moving<Element>(
+        _ items: [Element],
+        from sourceIndex: Int,
+        to destinationIndex: Int
+    ) -> [Element] {
+        guard items.indices.contains(sourceIndex),
+              items.indices.contains(destinationIndex),
+              sourceIndex != destinationIndex
+        else {
+            return items
+        }
+
+        var reordered = items
+        let item = reordered.remove(at: sourceIndex)
+        reordered.insert(item, at: destinationIndex)
+        return reordered
+    }
+}
+
 public enum PopupGeometry {
     public static let margin: CGFloat = 8
 
