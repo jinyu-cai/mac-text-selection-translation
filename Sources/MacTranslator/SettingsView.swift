@@ -59,10 +59,15 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
                 ForEach($settings.backends) { $backend in
+                    let backendID = backend.id
                     BackendRow(
                         backend: $backend,
                         isTesting: testingIDs.contains(backend.id),
                         outcome: testOutcomes[backend.id],
+                        canMoveUp: backendID != settings.backends.first?.id,
+                        canMoveDown: backendID != settings.backends.last?.id,
+                        onMoveUp: { settings.moveBackend(id: backendID, by: -1) },
+                        onMoveDown: { settings.moveBackend(id: backendID, by: 1) },
                         onTest: { test(backend) },
                         onDelete: { settings.removeBackend(backend) }
                     )
@@ -75,7 +80,7 @@ struct SettingsView: View {
             } header: {
                 Text("AI 后端（OpenAI 兼容，可启用多个并行对比）")
             } footer: {
-                Text("勾选「启用」的后端会在每次翻译时**并行**调用，浮窗里每个后端一张结果卡。Base URL 会自动拼上 /chat/completions。")
+                Text("勾选「启用」的后端会在每次翻译时**并行**调用；使用上下箭头自定义顺序，浮窗结果卡也按这个顺序从上到下显示。Base URL 会自动拼上 /chat/completions。")
                     .font(.caption)
             }
 
@@ -155,7 +160,6 @@ struct SettingsView: View {
 
             Section("划词") {
                 Toggle("启用全局快捷键", isOn: $settings.enableHotkey)
-                    .onChange(of: settings.enableHotkey) { reconfigure() }
 
                 LabeledContent("快捷键") {
                     ShortcutRecorder(
@@ -165,8 +169,6 @@ struct SettingsView: View {
                         conflictModifiers: settings.ocrHotkeyModifiers,
                         onRecordingChanged: setHotkeysPaused
                     )
-                    .onChange(of: settings.hotkeyKeyCode) { reconfigure() }
-                    .onChange(of: settings.hotkeyModifiers) { reconfigure() }
                     .disabled(!settings.enableHotkey)
                 }
                 if let error = settings.hotkeyRegistrationError {
@@ -176,7 +178,6 @@ struct SettingsView: View {
                 }
 
                 Toggle("启用截图 OCR 快捷键", isOn: $settings.enableOCRHotkey)
-                    .onChange(of: settings.enableOCRHotkey) { reconfigure() }
 
                 LabeledContent("OCR 快捷键") {
                     ShortcutRecorder(
@@ -186,8 +187,6 @@ struct SettingsView: View {
                         conflictModifiers: settings.hotkeyModifiers,
                         onRecordingChanged: setHotkeysPaused
                     )
-                    .onChange(of: settings.ocrHotkeyKeyCode) { reconfigure() }
-                    .onChange(of: settings.ocrHotkeyModifiers) { reconfigure() }
                     .disabled(!settings.enableOCRHotkey)
                 }
                 if let error = settings.ocrHotkeyRegistrationError {
@@ -197,7 +196,6 @@ struct SettingsView: View {
                 }
 
                 Toggle("选中文字后显示浮动翻译按钮", isOn: $settings.enableFloatingIcon)
-                    .onChange(of: settings.enableFloatingIcon) { reconfigure() }
                 Toggle("翻译后恢复剪贴板内容", isOn: $settings.restoreClipboard)
             }
 
@@ -338,10 +336,6 @@ struct SettingsView: View {
     private var accessibilityTrusted: Bool { AXIsProcessTrusted() }
     private var screenRecordingAllowed: Bool { CGPreflightScreenCaptureAccess() }
 
-    private func reconfigure() {
-        (NSApp.delegate as? AppDelegate)?.configureTriggers()
-    }
-
     private func refreshLaunchState() {
         launchAtLogin = LoginItem.isEnabled
         launchRequiresApproval = LoginItem.requiresApproval
@@ -369,6 +363,10 @@ private struct BackendRow: View {
     @Binding var backend: Backend
     var isTesting: Bool
     var outcome: SettingsView.TestOutcome?
+    var canMoveUp: Bool
+    var canMoveDown: Bool
+    var onMoveUp: () -> Void
+    var onMoveDown: () -> Void
     var onTest: () -> Void
     var onDelete: () -> Void
 
@@ -380,6 +378,20 @@ private struct BackendRow: View {
                     .help("启用此后端")
                 TextField("名称", text: $backend.name)
                     .textFieldStyle(.roundedBorder)
+                Button(action: onMoveUp) {
+                    Image(systemName: "arrow.up")
+                }
+                .buttonStyle(.borderless)
+                .disabled(!canMoveUp)
+                .help("上移此后端")
+                .accessibilityLabel("上移 \(backend.name)")
+                Button(action: onMoveDown) {
+                    Image(systemName: "arrow.down")
+                }
+                .buttonStyle(.borderless)
+                .disabled(!canMoveDown)
+                .help("下移此后端")
+                .accessibilityLabel("下移 \(backend.name)")
                 Button(role: .destructive, action: onDelete) {
                     Image(systemName: "trash")
                 }
