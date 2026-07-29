@@ -513,11 +513,13 @@ data: [DONE]
 ```
 解析（`OpenAIClient.parse`）：取 `data:` 前缀的行 → 去前缀 → `[DONE]` 即结束 → 否则 JSON 解出 `choices[0].delta.content` → `yield`。
 
+可靠性：`NetworkRetryPolicy` 只在尚未产生任何译文时，对超时、DNS/TLS、断网或连接丢失自动重试一次；已经输出部分译文后绝不重试，避免重复文本。最终失败会记录不含原文和密钥的 `NSURLError` 代码，并在结果卡中显示该代码。
+
 ### 9.3 Prompt 设计
-`AppSettings.effectiveSystemPrompt()`：默认「翻译成目标语言；若已是目标语言则翻成英文；只输出译文」。允许用户用自定义 prompt 完全覆盖。
+`AppSettings.effectiveSystemPrompt()` 委托 `TranslationPromptPolicy`：系统边界始终把用户消息视为待翻译的非可信源文本，避免把原文中的命令当作任务执行。单词或短语进入词典模式，按现行词性和主要义项输出词形、语法、搭配、双语例句与近义词辨析；句子或段落进入翻译模式，默认「翻译成目标语言；若已是目标语言则翻成英文；只输出译文」。用户的自定义 prompt 作为可信翻译偏好追加，不会覆盖这两层边界。
 
 ### 9.4 多后端并行对比
-- `AppSettings.backends: [Backend]`，每个后端独立的 URL/key/模型/启用开关；以 JSON 存 UserDefaults（旧的单配置会自动迁移成第一个后端）。数组顺序也是浮窗结果卡的显示顺序，设置页的上下箭头通过 `ListOrderingPolicy` 安全重排并立即持久化。
+- `AppSettings.backends: [Backend]`，每个后端独立的 URL/key/模型/启用开关；以 JSON 存 UserDefaults（旧的单配置会自动迁移成第一个后端）。数组顺序也是浮窗结果卡的显示顺序，设置页通过 SwiftUI 的 `draggable` / `dropDestination` 和 `ListOrderingPolicy` 安全重排并立即持久化。
 - 翻译时 `TranslationSession` 对**所有启用的后端**各开一个 `Task`，每个独立流式；浮窗里每个后端一张 `ResultCard`，可分别复制、各自显示加载/错误。
 - 这是「同一输入 → 多模型并行 → 同屏对比」的范式：因为接口都是 OpenAI 兼容，加一个后端只是多一条配置，不用改翻译逻辑。设置界面用 `ForEach($settings.backends)`（**绑定遍历**）实现增删改。
 

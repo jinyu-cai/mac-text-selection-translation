@@ -1,4 +1,5 @@
 import AppKit
+import MacTranslatorCore
 
 /// Watches global mouse events to decide when the user has likely selected
 /// text (a drag, or a double/triple click), so we can offer the floating icon.
@@ -26,9 +27,12 @@ final class SelectionWatcher {
         addMonitor(.leftMouseUp) { [weak self] event in
             guard let self else { return }
             let location = NSEvent.mouseLocation
-            let movedFar = self.didDrag && Self.distance(self.mouseDownLocation, location) > 6
-            let multiClick = event.clickCount >= 2
-            guard movedFar || multiClick else { return }
+            let dragDistance = Self.distance(self.mouseDownLocation, location)
+            guard SelectionCapturePolicy.isLikelySelectionGesture(
+                didDrag: self.didDrag,
+                dragDistance: dragDistance,
+                clickCount: event.clickCount
+            ) else { return }
             // Small delay so the selection settles in the source app.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                 self.onSelection?(location)

@@ -8,6 +8,31 @@ public enum ClipboardRestorePolicy {
     }
 }
 
+public enum SelectionCapturePolicy {
+    public static let maximumCopyAttempts = 2
+    public static let minimumSelectionDragDistance: CGFloat = 2
+
+    /// A retry is useful only when the previous synthetic copy did not touch
+    /// the pasteboard. Once it changed, retrying could overwrite a real copy
+    /// made by the user and makes the clipboard's origin ambiguous.
+    public static func shouldRetryCopy(
+        completedAttempts: Int,
+        pasteboardChanged: Bool
+    ) -> Bool {
+        completedAttempts < maximumCopyAttempts && !pasteboardChanged
+    }
+
+    /// AppKit already filters ordinary click jitter before emitting a drag
+    /// event, so a small real drag can represent a one-character selection.
+    public static func isLikelySelectionGesture(
+        didDrag: Bool,
+        dragDistance: CGFloat,
+        clickCount: Int
+    ) -> Bool {
+        (didDrag && dragDistance >= minimumSelectionDragDistance) || clickCount >= 2
+    }
+}
+
 public enum LoginItemRegistrationPolicy {
     public static func isRegistered(_ status: SMAppService.Status) -> Bool {
         status == .enabled || status == .requiresApproval
@@ -33,6 +58,39 @@ public enum ListOrderingPolicy {
         let item = reordered.remove(at: sourceIndex)
         reordered.insert(item, at: destinationIndex)
         return reordered
+    }
+}
+
+public enum NetworkRetryPolicy {
+    public static let maximumAttempts = 2
+
+    /// Retries one transient URL-loading failure, but only before any response
+    /// content has been delivered to the caller.
+    public static func shouldRetry(
+        errorDomain: String,
+        errorCode: Int,
+        completedAttempts: Int,
+        hasReceivedContent: Bool
+    ) -> Bool {
+        guard errorDomain == NSURLErrorDomain,
+              completedAttempts < maximumAttempts,
+              !hasReceivedContent
+        else {
+            return false
+        }
+
+        let transientCodes: Set<Int> = [
+            URLError.timedOut.rawValue,
+            URLError.cannotFindHost.rawValue,
+            URLError.cannotConnectToHost.rawValue,
+            URLError.networkConnectionLost.rawValue,
+            URLError.dnsLookupFailed.rawValue,
+            URLError.resourceUnavailable.rawValue,
+            URLError.notConnectedToInternet.rawValue,
+            URLError.secureConnectionFailed.rawValue,
+            URLError.cannotLoadFromNetwork.rawValue,
+        ]
+        return transientCodes.contains(errorCode)
     }
 }
 

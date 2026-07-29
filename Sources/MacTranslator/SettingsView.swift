@@ -16,6 +16,7 @@ struct SettingsView: View {
     @State private var testOutcomes: [UUID: TestOutcome] = [:]
     @State private var dictionaryTesting = false
     @State private var dictionaryTestOutcome: TestOutcome?
+    @State private var dropTargetBackendID: UUID?
 
     struct TestOutcome { let ok: Bool; let message: String }
 
@@ -68,9 +69,33 @@ struct SettingsView: View {
                         canMoveDown: backendID != settings.backends.last?.id,
                         onMoveUp: { settings.moveBackend(id: backendID, by: -1) },
                         onMoveDown: { settings.moveBackend(id: backendID, by: 1) },
+                        dragPayload: backendID.uuidString,
                         onTest: { test(backend) },
                         onDelete: { settings.removeBackend(backend) }
                     )
+                    .background {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(
+                                dropTargetBackendID == backendID
+                                    ? Color.accentColor.opacity(0.12)
+                                    : Color.clear
+                            )
+                    }
+                    .dropDestination(for: String.self) { payloads, _ in
+                        guard let payload = payloads.first,
+                              let draggedBackendID = UUID(uuidString: payload),
+                              settings.backends.contains(where: { $0.id == draggedBackendID })
+                        else { return false }
+                        settings.moveBackend(id: draggedBackendID, to: backendID)
+                        dropTargetBackendID = nil
+                        return true
+                    } isTargeted: { isTargeted in
+                        if isTargeted {
+                            dropTargetBackendID = backendID
+                        } else if dropTargetBackendID == backendID {
+                            dropTargetBackendID = nil
+                        }
+                    }
                 }
                 Button {
                     settings.addBackend()
@@ -80,7 +105,7 @@ struct SettingsView: View {
             } header: {
                 Text("AI 后端（OpenAI 兼容，可启用多个并行对比）")
             } footer: {
-                Text("勾选「启用」的后端会在每次翻译时**并行**调用；使用上下箭头自定义顺序，浮窗结果卡也按这个顺序从上到下显示。Base URL 会自动拼上 /chat/completions。")
+                Text("勾选「启用」的后端会在每次翻译时**并行**调用；拖动后端名称左侧的手柄即可排序，浮窗结果卡也按这个顺序从上到下显示。Base URL 会自动拼上 /chat/completions。")
                     .font(.caption)
             }
 
@@ -367,6 +392,7 @@ private struct BackendRow: View {
     var canMoveDown: Bool
     var onMoveUp: () -> Void
     var onMoveDown: () -> Void
+    var dragPayload: String
     var onTest: () -> Void
     var onDelete: () -> Void
 
@@ -376,22 +402,21 @@ private struct BackendRow: View {
                 Toggle("", isOn: $backend.isEnabled)
                     .labelsHidden()
                     .help("启用此后端")
+                Image(systemName: "line.3.horizontal")
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 2)
+                    .contentShape(Rectangle())
+                    .draggable(dragPayload)
+                    .help("拖动调整后端顺序")
+                    .accessibilityLabel("拖动排序 \(backend.name)")
+                    .contextMenu {
+                        Button("上移", action: onMoveUp)
+                            .disabled(!canMoveUp)
+                        Button("下移", action: onMoveDown)
+                            .disabled(!canMoveDown)
+                    }
                 TextField("名称", text: $backend.name)
                     .textFieldStyle(.roundedBorder)
-                Button(action: onMoveUp) {
-                    Image(systemName: "arrow.up")
-                }
-                .buttonStyle(.borderless)
-                .disabled(!canMoveUp)
-                .help("上移此后端")
-                .accessibilityLabel("上移 \(backend.name)")
-                Button(action: onMoveDown) {
-                    Image(systemName: "arrow.down")
-                }
-                .buttonStyle(.borderless)
-                .disabled(!canMoveDown)
-                .help("下移此后端")
-                .accessibilityLabel("下移 \(backend.name)")
                 Button(role: .destructive, action: onDelete) {
                     Image(systemName: "trash")
                 }
@@ -435,6 +460,12 @@ private struct BackendRow: View {
         }
         .padding(.vertical, 4)
         .opacity(backend.isEnabled ? 1 : 0.55)
+        .accessibilityAction(named: Text("上移")) {
+            if canMoveUp { onMoveUp() }
+        }
+        .accessibilityAction(named: Text("下移")) {
+            if canMoveDown { onMoveDown() }
+        }
     }
 }
 
