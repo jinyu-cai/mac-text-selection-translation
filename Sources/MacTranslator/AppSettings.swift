@@ -168,6 +168,18 @@ final class AppSettings: ObservableObject {
         )
     }
 
+    /// Moves a dragged backend to the row it was dropped on.
+    func moveBackend(id: UUID, to destinationID: UUID) {
+        guard let sourceIndex = backends.firstIndex(where: { $0.id == id }),
+              let destinationIndex = backends.firstIndex(where: { $0.id == destinationID })
+        else { return }
+        backends = ListOrderingPolicy.moving(
+            backends,
+            from: sourceIndex,
+            to: destinationIndex
+        )
+    }
+
     func removeBackend(_ backend: Backend) {
         do {
             try KeychainStore.delete(account: KeychainStore.Account.backendKey(backend.id))
@@ -343,17 +355,10 @@ final class AppSettings: ObservableObject {
     /// otherwise we build a faithful translate-into-target instruction that
     /// auto-flips to English when the source is already the target language.
     func effectiveSystemPrompt() -> String {
-        let custom = customPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !custom.isEmpty { return custom }
-
-        let target = targetLanguage.isEmpty ? "中文" : targetLanguage
-        return """
-        You are a professional, faithful translation engine. \
-        Translate the user's text into \(target). \
-        If the text is already in \(target), translate it into English instead. \
-        Preserve the original meaning, tone and formatting. \
-        Output ONLY the translation itself — no quotes, no explanations, no extra commentary.
-        """
+        TranslationPromptPolicy.systemPrompt(
+            targetLanguage: targetLanguage,
+            customPrompt: customPrompt
+        )
     }
 
     private static func speechLanguageCode(for language: String) -> String? {

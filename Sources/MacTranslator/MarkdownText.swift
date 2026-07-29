@@ -1,3 +1,4 @@
+import MacTranslatorCore
 import SwiftUI
 
 /// Renders AI output as Markdown while preserving the original string for copy
@@ -69,6 +70,9 @@ struct MarkdownText: View {
                 .padding(.vertical, 6)
                 .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
 
+        case .table(let table):
+            MarkdownTableView(table: table)
+
         case .rule:
             Divider()
         }
@@ -90,6 +94,8 @@ struct MarkdownText: View {
 
 private struct InlineMarkdownText: View {
     let markdown: String
+    var alignment: Alignment = .leading
+    var textAlignment: TextAlignment = .leading
 
     private var renderedText: AttributedString {
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
@@ -98,8 +104,93 @@ private struct InlineMarkdownText: View {
 
     var body: some View {
         Text(renderedText)
+            .multilineTextAlignment(textAlignment)
             .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: alignment)
+    }
+}
+
+private struct MarkdownTableView: View {
+    let table: MarkdownTable
+
+    private var columnWidths: [CGFloat] {
+        table.headers.indices.map { column in
+            let cells = [table.headers[column]] + table.rows.map { $0[column] }
+            let longestCell = cells.map(\.count).max() ?? 0
+            return min(240, max(84, CGFloat(longestCell) * 7.5 + 24))
+        }
+    }
+
+    var body: some View {
+        ScrollView(.horizontal) {
+            VStack(alignment: .leading, spacing: 0) {
+                tableRow(table.headers, isHeader: true)
+                ForEach(Array(table.rows.enumerated()), id: \.offset) { _, row in
+                    tableRow(row, isHeader: false)
+                }
+            }
+            .background(Color.primary.opacity(0.015))
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.18))
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func tableRow(_ cells: [String], isHeader: Bool) -> some View {
+        HStack(alignment: .top, spacing: 0) {
+            ForEach(cells.indices, id: \.self) { column in
+                let alignment = table.alignments[column]
+                InlineMarkdownText(
+                    markdown: cells[column],
+                    alignment: frameAlignment(alignment),
+                    textAlignment: textAlignment(alignment)
+                )
+                .font(isHeader ? .body.weight(.semibold) : .body)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .frame(width: columnWidths[column], alignment: frameAlignment(alignment))
+            }
+        }
+        .background(isHeader ? Color.primary.opacity(0.07) : Color.clear)
+        .overlay {
+            GeometryReader { geometry in
+                ForEach(0..<max(0, cells.count - 1), id: \.self) { column in
+                    let xPosition = columnWidths.prefix(column + 1).reduce(0, +)
+                    Rectangle()
+                        .fill(Color.primary.opacity(0.14))
+                        .frame(width: 1, height: geometry.size.height)
+                        .position(x: xPosition, y: geometry.size.height / 2)
+                }
+            }
+        }
+        .overlay(alignment: .bottom) {
+            Divider()
+        }
+    }
+
+    private func frameAlignment(_ alignment: MarkdownTableAlignment) -> Alignment {
+        switch alignment {
+        case .left:
+            return .topLeading
+        case .center:
+            return .top
+        case .right:
+            return .topTrailing
+        }
+    }
+
+    private func textAlignment(_ alignment: MarkdownTableAlignment) -> TextAlignment {
+        switch alignment {
+        case .left:
+            return .leading
+        case .center:
+            return .center
+        case .right:
+            return .trailing
+        }
     }
 }
 
@@ -109,6 +200,7 @@ private enum MarkdownBlock {
     case list([MarkdownListItem])
     case quote(String)
     case code(String)
+    case table(MarkdownTable)
     case rule
 
     static func parse(_ markdown: String) -> [MarkdownBlock] {
@@ -155,6 +247,14 @@ private enum MarkdownBlock {
                     index += 1
                 }
                 blocks.append(.code(codeLines.joined(separator: "\n")))
+                continue
+            }
+
+            if let parsedTable = MarkdownTableParser.parse(lines: lines, startingAt: index) {
+                flushParagraph()
+                flushList()
+                blocks.append(.table(parsedTable.table))
+                index += parsedTable.consumedLineCount
                 continue
             }
 
