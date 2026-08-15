@@ -133,6 +133,7 @@ final class PopupController {
     func close() {
         removeDismissMonitors()
         session.cancel()
+        PronunciationSpeaker.shared.stop()
         panel?.orderOut(nil)
     }
 
@@ -293,6 +294,7 @@ private struct PopupView: View {
 
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var noteStore = NoteStore.shared
+    @ObservedObject private var speaker = PronunciationSpeaker.shared
     @State private var didSaveNote = false
 
     private var isUserSized: Bool { layout.userSize != nil }
@@ -320,6 +322,8 @@ private struct PopupView: View {
         )
         .onChange(of: session.sourceText) { _, _ in
             didSaveNote = false
+            speaker.stop()
+            speaker.clearError()
         }
     }
 
@@ -394,8 +398,16 @@ private struct PopupView: View {
                         SpeakButton(
                             text: session.sourceText,
                             languageCode: session.sourceSpeechLanguage,
-                            help: "朗读原文"
+                            help: settings.originalTextTTSConfig == nil ? "使用 macOS 语音朗读原文" : "使用 AI TTS 朗读原文",
+                            aiConfig: settings.originalTextTTSConfig
                         )
+                    }
+
+                    if let errorMessage = speaker.errorMessage {
+                        Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
 
                     if session.showsDictionary {
@@ -571,12 +583,32 @@ private struct SpeakButton: View {
     let text: String
     let languageCode: String?
     let help: String
+    let aiConfig: QwenTTSConfig?
+
+    @ObservedObject private var speaker = PronunciationSpeaker.shared
+
+    init(
+        text: String,
+        languageCode: String?,
+        help: String,
+        aiConfig: QwenTTSConfig? = nil
+    ) {
+        self.text = text
+        self.languageCode = languageCode
+        self.help = help
+        self.aiConfig = aiConfig
+    }
 
     var body: some View {
         Button {
-            PronunciationSpeaker.shared.speak(text, language: languageCode)
+            speaker.speak(text, language: languageCode, aiConfig: aiConfig)
         } label: {
-            Image(systemName: "speaker.wave.2")
+            if aiConfig != nil, speaker.isPreparingAI {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Image(systemName: aiConfig == nil ? "speaker.wave.2" : "waveform")
+            }
         }
         .buttonStyle(.borderless)
         .controlSize(.small)

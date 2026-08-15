@@ -16,6 +16,8 @@ struct SettingsView: View {
     @State private var testOutcomes: [UUID: TestOutcome] = [:]
     @State private var dictionaryTesting = false
     @State private var dictionaryTestOutcome: TestOutcome?
+    @State private var ttsTesting = false
+    @State private var ttsTestOutcome: TestOutcome?
     @State private var dropTargetBackendID: UUID?
 
     struct TestOutcome { let ok: Bool; let message: String }
@@ -153,7 +155,67 @@ struct SettingsView: View {
             } header: {
                 Text("微软词典与读音")
             } footer: {
-                Text("词典使用 Azure AI Translator Dictionary Lookup。读音按钮使用 macOS 本机语音，并按语言代码选择声音。")
+                Text("词典使用 Azure AI Translator Dictionary Lookup。词典和译文的读音按钮仍使用 macOS 本机语音。")
+                    .font(.caption)
+            }
+
+            Section {
+                LabeledContent("当前方式") {
+                    Label(
+                        settings.originalTextTTSConfig == nil ? "macOS 本机语音" : "Qwen AI TTS",
+                        systemImage: settings.originalTextTTSConfig == nil ? "desktopcomputer" : "waveform"
+                    )
+                    .foregroundStyle(settings.originalTextTTSConfig == nil ? Color.secondary : Color.green)
+                }
+                TextField(
+                    "Endpoint",
+                    text: $settings.qwenTTSEndpoint,
+                    prompt: Text("https://dashscope-intl.aliyuncs.com/api/v1")
+                )
+                .textFieldStyle(.roundedBorder)
+                SecretTextField(
+                    title: "API Key",
+                    text: $settings.qwenTTSAPIKey,
+                    prompt: "阿里云百炼 API Key；留空使用本机语音"
+                )
+                TextField(
+                    "模型",
+                    text: $settings.qwenTTSModel,
+                    prompt: Text("qwen-audio-3.0-tts-flash")
+                )
+                .textFieldStyle(.roundedBorder)
+                TextField(
+                    "音色",
+                    text: $settings.qwenTTSVoice,
+                    prompt: Text("loongjohn")
+                )
+                .textFieldStyle(.roundedBorder)
+                TextField(
+                    "风格指令",
+                    text: $settings.qwenTTSInstruction,
+                    prompt: Text("Speak in a natural American English accent.")
+                )
+                .textFieldStyle(.roundedBorder)
+                HStack(spacing: 8) {
+                    Button(ttsTesting ? "测试中…" : "测试 AI 朗读") {
+                        testTTS()
+                    }
+                    .disabled(ttsTesting || settings.originalTextTTSConfig == nil)
+                    if let ttsTestOutcome {
+                        Label(
+                            ttsTestOutcome.message,
+                            systemImage: ttsTestOutcome.ok ? "checkmark.circle.fill" : "xmark.circle.fill"
+                        )
+                        .foregroundStyle(ttsTestOutcome.ok ? .green : .red)
+                        .font(.callout)
+                        .lineLimit(2)
+                    }
+                    Spacer()
+                }
+            } header: {
+                Text("原文 AI 朗读（可选）")
+            } footer: {
+                Text("API Key 留空时，原文使用 macOS 本机语音；配置完整后自动改用 AI TTS。默认使用 Flash 的美式成年男声 loongjohn；该音色不能与 Plus 模型混用。默认 Endpoint 是国际（新加坡）地域；中国内地 Key 请改为 https://dashscope.aliyuncs.com/api/v1。")
                     .font(.caption)
             }
 
@@ -308,6 +370,29 @@ struct SettingsView: View {
                 dictionaryTestOutcome = TestOutcome(ok: false, message: message)
             }
             dictionaryTesting = false
+        }
+    }
+
+    private func testTTS() {
+        guard let config = settings.originalTextTTSConfig else {
+            ttsTestOutcome = TestOutcome(ok: false, message: "请先完整填写 AI TTS 配置")
+            return
+        }
+        ttsTesting = true
+        ttsTestOutcome = nil
+        Task {
+            do {
+                let data = try await QwenTTSClient(config: config).synthesize(
+                    text: "Hello! This is a natural American English voice.",
+                    language: "en-US"
+                )
+                try PronunciationSpeaker.shared.playPreview(data)
+                ttsTestOutcome = TestOutcome(ok: true, message: "合成成功，正在试听（\(data.count / 1_024) KB）")
+            } catch {
+                let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                ttsTestOutcome = TestOutcome(ok: false, message: message)
+            }
+            ttsTesting = false
         }
     }
 
