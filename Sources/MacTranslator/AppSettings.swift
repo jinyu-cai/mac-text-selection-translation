@@ -31,6 +31,11 @@ final class AppSettings: ObservableObject {
     @Published var microsoftTranslatorRegion: String { didSet { defaults.set(microsoftTranslatorRegion, forKey: Keys.microsoftTranslatorRegion) } }
     @Published var microsoftDictionaryFromLanguage: String { didSet { defaults.set(microsoftDictionaryFromLanguage, forKey: Keys.microsoftDictionaryFromLanguage) } }
     @Published var microsoftDictionaryToLanguage: String { didSet { defaults.set(microsoftDictionaryToLanguage, forKey: Keys.microsoftDictionaryToLanguage) } }
+    @Published var qwenTTSEndpoint: String { didSet { defaults.set(qwenTTSEndpoint, forKey: Keys.qwenTTSEndpoint) } }
+    @Published var qwenTTSAPIKey: String { didSet { persistQwenTTSAPIKey() } }
+    @Published var qwenTTSModel: String { didSet { defaults.set(qwenTTSModel, forKey: Keys.qwenTTSModel) } }
+    @Published var qwenTTSVoice: String { didSet { defaults.set(qwenTTSVoice, forKey: Keys.qwenTTSVoice) } }
+    @Published var qwenTTSInstruction: String { didSet { defaults.set(qwenTTSInstruction, forKey: Keys.qwenTTSInstruction) } }
     @Published var hotkeyKeyCode: Int { didSet { defaults.set(hotkeyKeyCode, forKey: Keys.hotkeyKeyCode) } }
     @Published var hotkeyModifiers: Int { didSet { defaults.set(hotkeyModifiers, forKey: Keys.hotkeyModifiers) } }
     @Published var ocrHotkeyKeyCode: Int { didSet { defaults.set(ocrHotkeyKeyCode, forKey: Keys.ocrHotkeyKeyCode) } }
@@ -38,6 +43,7 @@ final class AppSettings: ObservableObject {
 
     private var backendCredentialError: String?
     private var microsoftCredentialError: String?
+    private var qwenTTSCredentialError: String?
 
     private init() {
         var startupCredentialError: String?
@@ -53,11 +59,16 @@ final class AppSettings: ObservableObject {
             Keys.microsoftTranslatorEndpoint: "https://api.cognitive.microsofttranslator.com",
             Keys.microsoftDictionaryFromLanguage: "en",
             Keys.microsoftDictionaryToLanguage: "zh-Hans",
+            Keys.qwenTTSEndpoint: "https://dashscope-intl.aliyuncs.com/api/v1",
+            Keys.qwenTTSModel: "qwen-audio-3.0-tts-flash",
+            Keys.qwenTTSVoice: "loongjohn",
+            Keys.qwenTTSInstruction: "Speak in a native American accent with relaxed, natural conversational delivery.",
             Keys.hotkeyKeyCode: DefaultHotkeys.translationKeyCode,
             Keys.hotkeyModifiers: DefaultHotkeys.translationModifiers,
             Keys.ocrHotkeyKeyCode: DefaultHotkeys.ocrKeyCode,
             Keys.ocrHotkeyModifiers: DefaultHotkeys.ocrModifiers,
         ])
+        Self.migrateQwenTTSNativeAmericanDefault(in: defaults)
         Self.migrateOCRHotkeyDefault(in: defaults)
 
         targetLanguage = defaults.string(forKey: Keys.targetLanguage) ?? "中文"
@@ -99,6 +110,19 @@ final class AppSettings: ObservableObject {
         microsoftTranslatorRegion = defaults.string(forKey: Keys.microsoftTranslatorRegion) ?? ""
         microsoftDictionaryFromLanguage = defaults.string(forKey: Keys.microsoftDictionaryFromLanguage) ?? "en"
         microsoftDictionaryToLanguage = defaults.string(forKey: Keys.microsoftDictionaryToLanguage) ?? "zh-Hans"
+        qwenTTSEndpoint = defaults.string(forKey: Keys.qwenTTSEndpoint) ?? "https://dashscope-intl.aliyuncs.com/api/v1"
+        do {
+            qwenTTSAPIKey = try KeychainStore.string(
+                for: KeychainStore.Account.qwenTTSAPIKey,
+                interaction: .suppress
+            ) ?? ""
+        } catch {
+            qwenTTSAPIKey = ""
+            qwenTTSCredentialError = Self.credentialReadMessage("Qwen TTS API Key", error)
+        }
+        qwenTTSModel = defaults.string(forKey: Keys.qwenTTSModel) ?? "qwen-audio-3.0-tts-flash"
+        qwenTTSVoice = defaults.string(forKey: Keys.qwenTTSVoice) ?? "loongjohn"
+        qwenTTSInstruction = defaults.string(forKey: Keys.qwenTTSInstruction) ?? "Speak in a native American accent with relaxed, natural conversational delivery."
         hotkeyKeyCode = defaults.integer(forKey: Keys.hotkeyKeyCode)
         hotkeyModifiers = defaults.integer(forKey: Keys.hotkeyModifiers)
         ocrHotkeyKeyCode = defaults.integer(forKey: Keys.ocrHotkeyKeyCode)
@@ -125,6 +149,9 @@ final class AppSettings: ObservableObject {
             microsoftCredentialError = startupCredentialError
             refreshCredentialError()
         }
+        if qwenTTSCredentialError != nil {
+            refreshCredentialError()
+        }
     }
 
     // MARK: - Backends
@@ -145,6 +172,19 @@ final class AppSettings: ObservableObject {
             fromLanguage: microsoftDictionaryFromLanguage,
             toLanguage: microsoftDictionaryToLanguage
         )
+    }
+
+    /// A complete config switches only the original-text button to AI TTS.
+    /// Keeping the API key empty preserves the zero-configuration system voice.
+    var originalTextTTSConfig: QwenTTSConfig? {
+        let config = QwenTTSConfig(
+            endpoint: qwenTTSEndpoint,
+            apiKey: qwenTTSAPIKey,
+            model: qwenTTSModel,
+            voice: qwenTTSVoice,
+            instruction: qwenTTSInstruction
+        )
+        return config.isConfigured ? config : nil
     }
 
     var targetSpeechLanguageCode: String? {
@@ -300,8 +340,22 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    private func persistQwenTTSAPIKey() {
+        do {
+            try KeychainStore.set(
+                qwenTTSAPIKey,
+                for: KeychainStore.Account.qwenTTSAPIKey
+            )
+            qwenTTSCredentialError = nil
+            refreshCredentialError()
+        } catch {
+            qwenTTSCredentialError = Self.credentialMessage("Qwen TTS API Key", error)
+            refreshCredentialError()
+        }
+    }
+
     private func refreshCredentialError() {
-        credentialError = microsoftCredentialError ?? backendCredentialError
+        credentialError = qwenTTSCredentialError ?? microsoftCredentialError ?? backendCredentialError
     }
 
     private static func credentialMessage(_ label: String, _ error: Error) -> String {
@@ -351,6 +405,29 @@ final class AppSettings: ObservableObject {
         defaults.set(true, forKey: Keys.didMigrateOCRHotkeyDefault)
     }
 
+    /// Replaces the original bilingual Plus preset with Qwen's dedicated
+    /// American-English male voice, while preserving any custom model/voice.
+    private static func migrateQwenTTSNativeAmericanDefault(in defaults: UserDefaults) {
+        guard !defaults.bool(forKey: Keys.didMigrateQwenTTSNativeAmericanDefault) else { return }
+
+        let model = defaults.string(forKey: Keys.qwenTTSModel)
+        let voice = defaults.string(forKey: Keys.qwenTTSVoice)
+        if model == "qwen-audio-3.0-tts-plus", voice == "longanlufeng" {
+            defaults.set("qwen-audio-3.0-tts-flash", forKey: Keys.qwenTTSModel)
+            defaults.set("loongjohn", forKey: Keys.qwenTTSVoice)
+        }
+
+        let oldInstruction = "Speak in a natural, conversational American English accent with a warm, relaxed tone."
+        if defaults.string(forKey: Keys.qwenTTSInstruction) == oldInstruction {
+            defaults.set(
+                "Speak in a native American accent with relaxed, natural conversational delivery.",
+                forKey: Keys.qwenTTSInstruction
+            )
+        }
+
+        defaults.set(true, forKey: Keys.didMigrateQwenTTSNativeAmericanDefault)
+    }
+
     /// The system prompt sent to the model. A non-empty custom prompt wins;
     /// otherwise we build a faithful translate-into-target instruction that
     /// auto-flips to English when the source is already the target language.
@@ -392,11 +469,16 @@ final class AppSettings: ObservableObject {
         static let microsoftTranslatorRegion = "microsoftTranslatorRegion"
         static let microsoftDictionaryFromLanguage = "microsoftDictionaryFromLanguage"
         static let microsoftDictionaryToLanguage = "microsoftDictionaryToLanguage"
+        static let qwenTTSEndpoint = "qwenTTSEndpoint"
+        static let qwenTTSModel = "qwenTTSModel"
+        static let qwenTTSVoice = "qwenTTSVoice"
+        static let qwenTTSInstruction = "qwenTTSInstruction"
         static let hotkeyKeyCode = "hotkeyKeyCode"
         static let hotkeyModifiers = "hotkeyModifiers"
         static let ocrHotkeyKeyCode = "ocrHotkeyKeyCode"
         static let ocrHotkeyModifiers = "ocrHotkeyModifiers"
         static let didMigrateOCRHotkeyDefault = "didMigrateOCRHotkeyDefaultToOptionShiftO"
+        static let didMigrateQwenTTSNativeAmericanDefault = "didMigrateQwenTTSNativeAmericanDefault"
     }
 
     private enum DefaultHotkeys {

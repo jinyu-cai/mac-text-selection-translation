@@ -13,7 +13,7 @@
 - **自动语向**：默认翻译成中文；如果原文已经是中文，则翻译成英文（目标语言可改）。
 - **词典式单词解析**：单词和短语自动按现行词性与主要义项展开，包含词形、语法、搭配、双语例句及近义词辨析。
 - **微软词典**：可选接入 Azure AI Translator Dictionary Lookup，显示词性、候选译词、置信度和回译上下文。
-- **读音**：原文、微软词典译词和 AI 译文都可一键朗读（使用 macOS 本机语音）。
+- **读音**：原文、微软词典译词和 AI 译文都可一键朗读；原文可选配 Qwen AI TTS，未配置时自动使用 macOS 本机语音。
 - **截图 OCR 翻译**：默认 `⌥⇧O`，或菜单栏选择「截图 OCR 翻译…」；框选无法复制的网页/电子书区域后自动识别并翻译。
 - **本地笔记**：可选开启，保存原文/译文并添加备注；数据保存在本机 Application Support。
 - **自定义提示词**：可追加自己的翻译偏好，同时保留翻译安全边界和词典模式。
@@ -103,6 +103,7 @@ API Key 保存在 macOS 钥匙串。应用在开机自启阶段使用无交互�
 | 思考能力 | 按 OpenAI Chat Completions 规范发送 `reasoning_effort`；支持关闭、低、中、高、极高和最大，“自动”使用模型默认值 |
 | 后端顺序 | 拖动每个后端名称左侧的手柄排序；该顺序会保存，并决定浮窗结果卡从上到下的顺序 |
 | 微软词典 | 开启后填写 Translator Endpoint / Key / Region，以及源语言和目标语言代码（默认 `en` → `zh-Hans`） |
+| 原文 AI 朗读 | 可选填写 Qwen TTS Endpoint / API Key / 模型 / 音色 / 风格指令；API Key 留空时使用 macOS 本机语音。默认 `qwen-audio-3.0-tts-flash` + 美式男声 `loongjohn` + 母语美式自然对话指令 |
 | 截图 OCR | 菜单栏里启动；适合在线电子书、图片或禁止复制的网页文字 |
 | 笔记 | 开启后浮窗显示保存按钮，菜单栏可打开笔记窗口 |
 | 目标语言 | 默认「中文」 |
@@ -110,6 +111,7 @@ API Key 保存在 macOS 钥匙串。应用在开机自启阶段使用无交互�
 | 快捷键 | 点一下开始录制，按下组合键即可；默认划词 `⌥D`，OCR `⌥⇧O` |
 
 「测试连接」按钮会发一次最小请求校验 Base URL / Key / 模型是否可用。
+「测试 AI 朗读」会合成并播放一小段英文音频，以校验 TTS 配置。Qwen-Audio-TTS 的 Endpoint 与 API Key 必须属于同一地域；默认是国际（新加坡）地域，中国内地账号可将 Endpoint 改为 `https://dashscope.aliyuncs.com/api/v1`。
 如果请求在收到任何译文前遇到超时、DNS/TLS 或连接中断，应用会自动重试一次；仍失败时会显示底层网络错误代码，便于诊断。
 
 ## 项目结构
@@ -128,6 +130,7 @@ Sources/MacTranslator/
 ├─ TextCapture.swift      模拟 ⌘C 取词 + 恢复剪贴板
 ├─ OCRTextCapture.swift   框选截图 + Vision OCR 识别
 ├─ OpenAIClient.swift     OpenAI 兼容客户端（SSE 流式）
+├─ QwenTTSClient.swift    Qwen-Audio-TTS 原文语音合成客户端
 ├─ TranslationSession.swift  单次翻译的可观察状态
 ├─ Popup.swift            贴光标的翻译浮窗
 ├─ FloatingIcon.swift     选中后的浮动小按钮

@@ -1,17 +1,48 @@
 import AVFoundation
+import Combine
+
+private enum PronunciationSpeakerError: LocalizedError {
+    case playbackFailed
+
+    var errorDescription: String? {
+        "AI TTS 音频无法播放。"
+    }
+}
 
 @MainActor
-final class PronunciationSpeaker {
+final class PronunciationSpeaker: ObservableObject {
     static let shared = PronunciationSpeaker()
 
     private let synthesizer = AVSpeechSynthesizer()
+    private var audioPlayer: AVAudioPlayer?
+    private var synthesisTask: Task<Void, Never>?
+    private var activeRequestID: UUID?
+
+    @Published private(set) var isPreparingAI = false
+    @Published private(set) var errorMessage: String?
 
     private init() {}
 
-    func speak(_ text: String, language: String? = nil) {
+    func speak(
+        _ text: String,
+        language: String? = nil,
+        aiConfig: QwenTTSConfig? = nil
+    ) {
         let spoken = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !spoken.isEmpty else { return }
 
+        stop()
+        errorMessage = nil
+
+        if let aiConfig {
+            speakWithAI(spoken, language: language, config: aiConfig)
+            return
+        }
+
+        speakWithSystemVoice(spoken, language: language)
+    }
+
+    private func speakWithSystemVoice(_ spoken: String, language: String?) {
         if synthesizer.isSpeaking {
             synthesizer.stopSpeaking(at: .immediate)
         }
@@ -22,7 +53,61 @@ final class PronunciationSpeaker {
     }
 
     func stop() {
+        activeRequestID = nil
+        synthesisTask?.cancel()
+        synthesisTask = nil
+        isPreparingAI = false
+        audioPlayer?.stop()
+        audioPlayer = nil
         synthesizer.stopSpeaking(at: .immediate)
+    }
+
+    func clearError() {
+        errorMessage = nil
+    }
+
+    /// Plays audio produced by the Settings connection test.
+    func playPreview(_ data: Data) throws {
+        stop()
+        errorMessage = nil
+        try startAudioPlayback(data)
+    }
+
+    private func speakWithAI(_ spoken: String, language: String?, config: QwenTTSConfig) {
+        let requestID = UUID()
+        activeRequestID = requestID
+        isPreparingAI = true
+
+        synthesisTask = Task { [weak self] in
+            do {
+                let data = try await QwenTTSClient(config: config).synthesize(
+                    text: spoken,
+                    language: language
+                )
+                try Task.checkCancellation()
+                guard let self, self.activeRequestID == requestID else { return }
+
+                try self.startAudioPlayback(data)
+                self.activeRequestID = nil
+                self.isPreparingAI = false
+                self.synthesisTask = nil
+            } catch is CancellationError {
+                return
+            } catch {
+                guard let self, self.activeRequestID == requestID else { return }
+                self.isPreparingAI = false
+                self.synthesisTask = nil
+                self.errorMessage = (error as? LocalizedError)?.errorDescription
+                    ?? error.localizedDescription
+            }
+        }
+    }
+
+    private func startAudioPlayback(_ data: Data) throws {
+        let player = try AVAudioPlayer(data: data)
+        player.prepareToPlay()
+        guard player.play() else { throw PronunciationSpeakerError.playbackFailed }
+        audioPlayer = player
     }
 
     private static func voice(for language: String?) -> AVSpeechSynthesisVoice? {

@@ -34,6 +34,7 @@ enum KeychainStore {
 
     enum Account {
         static let microsoftTranslatorKey = "microsoft-translator-key"
+        static let qwenTTSAPIKey = "qwen-tts-api-key"
 
         static func backendKey(_ id: UUID) -> String {
             "backend-key-" + id.uuidString
