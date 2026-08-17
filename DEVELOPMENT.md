@@ -565,8 +565,8 @@ data: [DONE]
 本项目早期出过岔子：机器的**全局** `git config` 是另一个账号的邮箱，而此仓库没本地覆盖，导致 commit 全挂到了错的账号。修法：
 ```bash
 # 仓库级覆盖（只影响本仓库）
-git config --local user.name "Jinyu"
-git config --local user.email "jinyucai021@gmail.com"
+git config --local user.name "<公开显示名>"
+git config --local user.email "<GitHub-ID>+<username>@users.noreply.github.com"
 # 让推送也走对的账号
 git config --local credential.https://github.com.helper "!gh auth git-credential"
 ```

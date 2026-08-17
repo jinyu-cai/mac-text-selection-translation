@@ -111,52 +111,54 @@ struct SettingsView: View {
                     .font(.caption)
             }
 
-            Section {
-                Toggle("启用微软词典", isOn: $settings.enableMicrosoftDictionary)
+            if ExperimentalFeatures.microsoftDictionary {
+                Section {
+                    Toggle("启用微软词典", isOn: $settings.enableMicrosoftDictionary)
 
-                if settings.enableMicrosoftDictionary {
-                    TextField("Endpoint", text: $settings.microsoftTranslatorEndpoint, prompt: Text("https://api.cognitive.microsofttranslator.com"))
-                        .textFieldStyle(.roundedBorder)
-                    SecretTextField(
-                        title: "Translator Key",
-                        text: $settings.microsoftTranslatorKey,
-                        prompt: "Azure Translator key"
-                    )
-                    TextField("Region", text: $settings.microsoftTranslatorRegion, prompt: Text("eastus / global 资源可按需留空"))
-                        .textFieldStyle(.roundedBorder)
-                    HStack(spacing: 8) {
-                        TextField("源语言", text: $settings.microsoftDictionaryFromLanguage, prompt: Text("en"))
+                    if settings.enableMicrosoftDictionary {
+                        TextField("Endpoint", text: $settings.microsoftTranslatorEndpoint, prompt: Text("https://api.cognitive.microsofttranslator.com"))
                             .textFieldStyle(.roundedBorder)
-                            .frame(width: 88)
-                        Image(systemName: "arrow.right")
-                            .foregroundStyle(.secondary)
-                        TextField("目标语言", text: $settings.microsoftDictionaryToLanguage, prompt: Text("zh-Hans"))
+                        SecretTextField(
+                            title: "Translator Key",
+                            text: $settings.microsoftTranslatorKey,
+                            prompt: "Azure Translator key"
+                        )
+                        TextField("Region", text: $settings.microsoftTranslatorRegion, prompt: Text("eastus / global 资源可按需留空"))
                             .textFieldStyle(.roundedBorder)
-                            .frame(width: 108)
-                        Spacer()
-                    }
-                    HStack(spacing: 8) {
-                        Button(dictionaryTesting ? "测试中…" : "测试词典") {
-                            testDictionary()
+                        HStack(spacing: 8) {
+                            TextField("源语言", text: $settings.microsoftDictionaryFromLanguage, prompt: Text("en"))
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 88)
+                            Image(systemName: "arrow.right")
+                                .foregroundStyle(.secondary)
+                            TextField("目标语言", text: $settings.microsoftDictionaryToLanguage, prompt: Text("zh-Hans"))
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 108)
+                            Spacer()
                         }
-                        .disabled(dictionaryTesting)
-                        if let dictionaryTestOutcome {
-                            Label(
-                                dictionaryTestOutcome.message,
-                                systemImage: dictionaryTestOutcome.ok ? "checkmark.circle.fill" : "xmark.circle.fill"
-                            )
-                            .foregroundStyle(dictionaryTestOutcome.ok ? .green : .red)
-                            .font(.callout)
-                            .lineLimit(2)
+                        HStack(spacing: 8) {
+                            Button(dictionaryTesting ? "测试中…" : "测试词典") {
+                                testDictionary()
+                            }
+                            .disabled(dictionaryTesting)
+                            if let dictionaryTestOutcome {
+                                Label(
+                                    dictionaryTestOutcome.message,
+                                    systemImage: dictionaryTestOutcome.ok ? "checkmark.circle.fill" : "xmark.circle.fill"
+                                )
+                                .foregroundStyle(dictionaryTestOutcome.ok ? .green : .red)
+                                .font(.callout)
+                                .lineLimit(2)
+                            }
+                            Spacer()
                         }
-                        Spacer()
                     }
+                } header: {
+                    Text("微软词典与读音")
+                } footer: {
+                    Text("词典使用 Azure AI Translator Dictionary Lookup。词典和译文的读音按钮仍使用 macOS 本机语音。")
+                        .font(.caption)
                 }
-            } header: {
-                Text("微软词典与读音")
-            } footer: {
-                Text("词典使用 Azure AI Translator Dictionary Lookup。词典和译文的读音按钮仍使用 macOS 本机语音。")
-                    .font(.caption)
             }
 
             Section {
