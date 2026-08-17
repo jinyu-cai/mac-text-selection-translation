@@ -1,3 +1,4 @@
+import MacTranslatorCore
 import SwiftUI
 
 /// Observable state for one translation across one or more backends.
@@ -27,6 +28,26 @@ final class TranslationSession: ObservableObject {
 
     /// True while any backend is still streaming.
     var isLoading: Bool { results.contains { $0.isLoading } || isDictionaryLoading }
+
+    /// Enables saving the note. The note keeps only the first usable
+    /// translation (the earliest backend result with non-empty output and no
+    /// error), so once that content is final the note can be saved even while
+    /// later backends or the dictionary lookup are still streaming.
+    var canSaveNote: Bool {
+        // Terminal state (nothing streaming at all, e.g. no backends
+        // configured): the stream state can no longer change.
+        if !isLoading { return true }
+        return NoteSavePolicy.canSave(
+            results: results.map { result in
+                NoteResultState(
+                    isLoading: result.isLoading,
+                    hasUsableOutput: !result.output
+                        .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        && result.errorMessage == nil
+                )
+            }
+        )
+    }
 
     var showsDictionary: Bool {
         isDictionaryLoading || dictionaryLookup != nil || dictionaryErrorMessage != nil
