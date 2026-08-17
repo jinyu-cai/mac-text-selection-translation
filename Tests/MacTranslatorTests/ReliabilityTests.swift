@@ -34,9 +34,10 @@ struct ReliabilityTests {
         testTranslationPromptPolicy(expect: expect)
         testOpenAIRequestParameters(expect: expect)
         testMarkdownTableParsing(expect: expect)
+        testNoteSavePolicy(expect: expect)
 
         if failures.isEmpty {
-            print("All reliability tests passed (86 assertions).")
+            print("All reliability tests passed (98 assertions).")
         } else {
             for failure in failures { fputs("FAIL: \(failure)\n", stderr) }
             exit(1)
@@ -366,6 +367,57 @@ struct ReliabilityTests {
             MarkdownTableParser.parse(lines: ["A | B", "---"], startingAt: 0)
                 .map { _ in false } ?? true,
             "markdown table: header and delimiter column counts must match"
+        )
+    }
+
+    private static func testNoteSavePolicy(expect: (Bool, String) -> Void) {
+        func state(_ isLoading: Bool, _ hasUsableOutput: Bool) -> NoteResultState {
+            NoteResultState(isLoading: isLoading, hasUsableOutput: hasUsableOutput)
+        }
+
+        expect(
+            !NoteSavePolicy.canSave(results: []),
+            "note: no translation started means the note cannot be saved yet"
+        )
+        expect(
+            !NoteSavePolicy.canSave(results: [state(true, false)]),
+            "note: a streaming first backend must not be saved early"
+        )
+        expect(
+            !NoteSavePolicy.canSave(results: [state(true, true)]),
+            "note: partial streaming output is not the final first-AI content"
+        )
+        expect(
+            NoteSavePolicy.canSave(results: [state(false, true)]),
+            "note: once the first backend finishes, the note can be saved"
+        )
+        expect(
+            NoteSavePolicy.canSave(results: [state(false, true), state(true, false)]),
+            "note: a later backend still streaming must not block the note"
+        )
+        expect(
+            NoteSavePolicy.canSave(results: [state(false, true), state(true, false), state(true, false)]),
+            "note: saving must not wait for any other backend"
+        )
+        expect(
+            !NoteSavePolicy.canSave(results: [state(true, true), state(false, true)]),
+            "note: a still-streaming earlier backend can still become the note content"
+        )
+        expect(
+            !NoteSavePolicy.canSave(results: [state(false, false), state(true, false)]),
+            "note: after the first backend fails, the next candidate must finish first"
+        )
+        expect(
+            NoteSavePolicy.canSave(results: [state(false, false), state(false, true)]),
+            "note: a first usable result is saved as soon as it is final"
+        )
+        expect(
+            NoteSavePolicy.canSave(results: [state(false, true), state(true, true)]),
+            "note: the first backend's final content wins even if a later one streams"
+        )
+        expect(
+            NoteSavePolicy.canSave(results: [state(false, false), state(false, false)]),
+            "note: when every backend has finished, the state is terminal and saveable"
         )
     }
 

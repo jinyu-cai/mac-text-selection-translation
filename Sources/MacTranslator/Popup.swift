@@ -346,7 +346,7 @@ private struct PopupView: View {
                 }
                 .buttonStyle(.borderless)
                 .help(didSaveNote ? "已保存到笔记" : "保存到笔记")
-                .disabled(didSaveNote || session.isLoading || session.sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(didSaveNote || !session.canSaveNote || session.sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             Button(action: onClose) {
                 Image(systemName: "xmark")

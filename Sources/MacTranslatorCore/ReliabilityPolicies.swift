@@ -94,6 +94,36 @@ public enum NetworkRetryPolicy {
     }
 }
 
+public struct NoteResultState {
+    public var isLoading: Bool
+    public var hasUsableOutput: Bool
+
+    public init(isLoading: Bool, hasUsableOutput: Bool) {
+        self.isLoading = isLoading
+        self.hasUsableOutput = hasUsableOutput
+    }
+}
+
+public enum NoteSavePolicy {
+    /// The note feature keeps only the first usable translation — the earliest
+    /// backend result with non-empty output and no error. Saving therefore
+    /// needs only that result to finish streaming; later backends still
+    /// running never change the note content and must not block saving.
+    public static func canSave(results: [NoteResultState]) -> Bool {
+        guard !results.isEmpty else { return false }
+        for result in results {
+            // A still-running result from the front of the list could still
+            // become the note's content, so keep waiting for it.
+            if result.isLoading { return false }
+            // The first result that finished with usable output is exactly the
+            // content the note saves — it is final now.
+            if result.hasUsableOutput { return true }
+        }
+        // Every backend finished (all unusable): the stream state is terminal.
+        return true
+    }
+}
+
 public enum PopupGeometry {
     public static let margin: CGFloat = 8
 
