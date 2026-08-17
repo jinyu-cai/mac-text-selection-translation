@@ -1,5 +1,11 @@
 import Foundation
 
+/// Dormant features that stay in the codebase while they undergo validation.
+/// Flip a flag only when the corresponding feature is ready for public use.
+enum ExperimentalFeatures {
+    static let microsoftDictionary = false
+}
+
 /// User-facing Microsoft Translator Dictionary configuration.
 struct MicrosoftDictionaryConfig: Equatable {
     var isEnabled: Bool

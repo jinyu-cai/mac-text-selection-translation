@@ -197,7 +197,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func hasLookupProvider(at point: NSPoint) -> Bool {
         guard settings.hasEnabledLookupProvider else {
-            popup.showNotice("还没有启用任何 AI 后端或微软词典。\n请在设置里添加并启用至少一个。", at: point)
+            popup.showNotice("还没有启用任何 AI 后端。\n请在设置里添加并启用至少一个。", at: point)
             return false
         }
         return true

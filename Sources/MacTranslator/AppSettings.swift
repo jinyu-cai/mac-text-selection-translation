@@ -160,12 +160,13 @@ final class AppSettings: ObservableObject {
     var enabledBackends: [Backend] { backends.filter { $0.isUsable } }
 
     var hasEnabledLookupProvider: Bool {
-        !enabledBackends.isEmpty || enableMicrosoftDictionary
+        !enabledBackends.isEmpty
+            || (ExperimentalFeatures.microsoftDictionary && enableMicrosoftDictionary)
     }
 
     var microsoftDictionaryConfig: MicrosoftDictionaryConfig {
         MicrosoftDictionaryConfig(
-            isEnabled: enableMicrosoftDictionary,
+            isEnabled: ExperimentalFeatures.microsoftDictionary && enableMicrosoftDictionary,
             endpoint: microsoftTranslatorEndpoint,
             apiKey: microsoftTranslatorKey,
             region: microsoftTranslatorRegion,
