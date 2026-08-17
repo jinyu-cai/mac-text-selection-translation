@@ -1,7 +1,7 @@
 BUNDLE  = Text Selection Translation.app
 BIN     = MacTranslator
 CONFIG ?= release
-VERSION ?= 1.0.8
+VERSION ?= 1.0.9
 BUILD_VERSION ?= $(shell /bin/date +%Y%m%d%H%M%S)
 # Code-signing identity. Auto-uses the stable self-signed "MacTranslator Dev"
 # certificate when present (even if it is not a system-trusted identity), so
