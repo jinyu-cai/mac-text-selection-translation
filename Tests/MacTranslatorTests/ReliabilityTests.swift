@@ -33,11 +33,12 @@ struct ReliabilityTests {
         testNetworkRetryPolicy(expect: expect)
         testTranslationPromptPolicy(expect: expect)
         testOpenAIRequestParameters(expect: expect)
+        testTTSRequestPolicy(expect: expect)
         testMarkdownTableParsing(expect: expect)
         testNoteSavePolicy(expect: expect)
 
         if failures.isEmpty {
-            print("All reliability tests passed (98 assertions).")
+            print("All reliability tests passed (107 assertions).")
         } else {
             for failure in failures { fputs("FAIL: \(failure)\n", stderr) }
             exit(1)
@@ -165,6 +166,41 @@ struct ReliabilityTests {
             ListOrderingPolicy.moving(items, from: 0, to: items.count) == items,
             "ordering: an invalid destination index should be a no-op"
         )
+    }
+
+    private static func testTTSRequestPolicy(expect: (Bool, String) -> Void) {
+        expect(
+            TTSRequestPolicy.openAIEndpoint(from: "https://example.test/v1")?.absoluteString
+                == "https://example.test/v1/audio/speech",
+            "tts: an OpenAI base URL must append /audio/speech"
+        )
+        expect(
+            TTSRequestPolicy.openAIEndpoint(from: "https://example.test/v1/audio/speech/")?.absoluteString
+                == "https://example.test/v1/audio/speech",
+            "tts: a complete OpenAI speech endpoint must not be changed"
+        )
+        expect(
+            TTSRequestPolicy.openAIEndpoint(from: "file:///tmp/speech") == nil,
+            "tts: non-HTTP speech endpoints must be rejected"
+        )
+        expect(
+            TTSRequestPolicy.dashScopeEndpoint(from: "https://dashscope.aliyuncs.com/api/v1")?.absoluteString
+                == "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer",
+            "tts: the DashScope API root must append its native speech path"
+        )
+
+        let body = TTSRequestPolicy.openAIBody(
+            model: " Qwen/Qwen3-TTS ",
+            input: "entrepreneur",
+            voice: " Aiden ",
+            responseFormat: " mp3 ",
+            instructions: "  "
+        )
+        expect(body["model"] as? String == "Qwen/Qwen3-TTS", "tts: OpenAI model names must be trimmed")
+        expect(body["input"] as? String == "entrepreneur", "tts: OpenAI input must use the flat standard field")
+        expect(body["voice"] as? String == "Aiden", "tts: OpenAI voice must use the flat standard field")
+        expect(body["response_format"] as? String == "mp3", "tts: OpenAI response_format must be included")
+        expect(body["instructions"] == nil, "tts: empty optional instructions must be omitted")
     }
 
     private static func testNetworkRetryPolicy(expect: (Bool, String) -> Void) {

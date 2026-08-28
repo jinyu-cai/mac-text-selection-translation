@@ -1,23 +1,65 @@
 import Foundation
+import MacTranslatorCore
 
-/// User-facing configuration for the original-text speech button. An empty
-/// API key intentionally means "use the macOS system voice".
-struct QwenTTSConfig: Equatable {
+/// Wire format used by a text-to-speech service.
+enum TTSAPIKind: String, Codable, CaseIterable, Identifiable {
+    case openAI
+    case dashScope
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .openAI: return "OpenAI 兼容"
+        case .dashScope: return "阿里云 DashScope"
+        }
+    }
+}
+
+/// One selectable speech backend. API keys are stripped before this value is
+/// persisted to UserDefaults and are stored separately in the Keychain.
+struct TTSBackend: Identifiable, Codable, Equatable {
+    var id: UUID = UUID()
+    var name: String
+    var apiKind: TTSAPIKind
     var endpoint: String
     var apiKey: String
     var model: String
     var voice: String
+    var responseFormat: String
     var instruction: String
+    var isEnabled: Bool = true
 
     var isConfigured: Bool {
-        !endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-            !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-            !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-            !voice.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard !endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !voice.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !responseFormat.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return false }
+
+        // Local OpenAI-compatible servers commonly do not require a key.
+        return apiKind == .openAI
+            || !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var isUsable: Bool { isEnabled && isConfigured }
+
+    static func makeNew() -> TTSBackend {
+        TTSBackend(
+            name: "OpenAI TTS",
+            apiKind: .openAI,
+            endpoint: "http://localhost:8000/v1",
+            apiKey: "",
+            model: "tts-1",
+            voice: "alloy",
+            responseFormat: "mp3",
+            instruction: "",
+            isEnabled: true
+        )
     }
 }
 
-enum QwenTTSError: LocalizedError {
+enum TTSError: LocalizedError {
     case missingConfiguration
     case invalidEndpoint
     case invalidResponse
@@ -31,133 +73,175 @@ enum QwenTTSError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .missingConfiguration:
-            return "AI 朗读未配置完整，请检查 Endpoint、API Key、模型和音色。"
+            return "TTS 配置不完整，请检查 Endpoint、模型、音色和音频格式。DashScope 还需要 API Key。"
         case .invalidEndpoint:
-            return "AI TTS Endpoint 无效。"
+            return "TTS Endpoint 无效。"
         case .invalidResponse:
-            return "AI TTS 返回了无法识别的响应。"
+            return "TTS 返回了无法识别的响应。"
         case let .http(status, body):
             let hint: String
             switch status {
             case 401: hint = "（API Key 可能无效）"
             case 403: hint = "（没有模型权限，或 API Key 与 Endpoint 地域不匹配）"
-            case 404: hint = "（Endpoint 或模型名可能不对）"
+            case 404: hint = "（Endpoint、协议类型或模型名可能不对）"
             case 429: hint = "（请求过于频繁或额度不足）"
             default: hint = ""
             }
-            return "AI TTS 请求失败 HTTP \(status)\(hint)\n\(body.prefix(300))"
+            return "TTS 请求失败 HTTP \(status)\(hint)\n\(body.prefix(300))"
         case let .service(code, message):
-            return "AI TTS 请求失败（\(code)）：\(message)"
+            return "TTS 请求失败（\(code)）：\(message)"
         case .missingAudio:
-            return "AI TTS 没有返回音频地址。"
+            return "TTS 没有返回音频。"
         case .invalidAudioURL:
-            return "AI TTS 返回的音频地址无效。"
+            return "TTS 返回的音频地址无效。"
         case let .audioDownload(status):
-            return "AI TTS 音频下载失败 HTTP \(status)。"
+            return "TTS 音频下载失败 HTTP \(status)。"
         case .emptyAudio:
-            return "AI TTS 返回了空音频。"
+            return "TTS 返回了空音频。"
         }
     }
 }
 
-/// Minimal client for Alibaba Cloud Model Studio's Qwen-Audio-TTS HTTP API.
-struct QwenTTSClient {
-    var config: QwenTTSConfig
+/// Client for OpenAI-compatible `/audio/speech` services and Alibaba Cloud's
+/// DashScope Qwen-Audio-TTS API.
+struct TTSClient {
+    var backend: TTSBackend
 
     func synthesize(text: String, language: String? = nil) async throws -> Data {
-        guard config.isConfigured else { throw QwenTTSError.missingConfiguration }
+        guard backend.isConfigured else { throw TTSError.missingConfiguration }
 
         let spoken = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !spoken.isEmpty else { throw QwenTTSError.emptyAudio }
+        guard !spoken.isEmpty else { throw TTSError.emptyAudio }
 
-        var request = URLRequest(url: try endpointURL())
+        switch backend.apiKind {
+        case .openAI:
+            return try await synthesizeOpenAI(text: spoken)
+        case .dashScope:
+            return try await synthesizeDashScope(text: spoken, language: language)
+        }
+    }
+
+    private func synthesizeOpenAI(text: String) async throws -> Data {
+        var request = URLRequest(url: try openAIEndpointURL())
         request.httpMethod = "POST"
         request.timeoutInterval = 120
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(
-            "Bearer \(config.apiKey.trimmingCharacters(in: .whitespacesAndNewlines))",
-            forHTTPHeaderField: "Authorization"
+        setAuthorization(on: &request)
+
+        let body = TTSRequestPolicy.openAIBody(
+            model: backend.model,
+            input: text,
+            voice: backend.voice,
+            responseFormat: backend.responseFormat,
+            instructions: backend.instruction
         )
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw TTSError.invalidResponse
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            throw TTSError.http(
+                status: http.statusCode,
+                body: String(data: data, encoding: .utf8) ?? ""
+            )
+        }
+        guard !data.isEmpty else { throw TTSError.emptyAudio }
+        return data
+    }
+
+    private func synthesizeDashScope(text: String, language: String?) async throws -> Data {
+        var request = URLRequest(url: try dashScopeEndpointURL())
+        request.httpMethod = "POST"
+        request.timeoutInterval = 120
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        setAuthorization(on: &request)
         request.httpBody = try JSONEncoder().encode(
-            RequestBody(
-                model: config.model.trimmingCharacters(in: .whitespacesAndNewlines),
-                input: RequestInput(
-                    text: spoken,
-                    voice: config.voice.trimmingCharacters(in: .whitespacesAndNewlines),
-                    format: "mp3",
+            DashScopeRequestBody(
+                model: trimmed(backend.model),
+                input: DashScopeRequestInput(
+                    text: text,
+                    voice: trimmed(backend.voice),
+                    format: trimmed(backend.responseFormat),
                     sampleRate: 24_000,
                     languageHints: Self.languageHints(for: language),
-                    instruction: Self.nonEmpty(config.instruction)
+                    instruction: nonEmpty(backend.instruction)
                 )
             )
         )
 
         let (responseData, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else {
-            throw QwenTTSError.invalidResponse
+            throw TTSError.invalidResponse
         }
         guard (200..<300).contains(http.statusCode) else {
-            throw QwenTTSError.http(
+            throw TTSError.http(
                 status: http.statusCode,
                 body: String(data: responseData, encoding: .utf8) ?? ""
             )
         }
 
-        let decoded: SynthesisResponse
+        let decoded: DashScopeResponse
         do {
-            decoded = try JSONDecoder().decode(SynthesisResponse.self, from: responseData)
+            decoded = try JSONDecoder().decode(DashScopeResponse.self, from: responseData)
         } catch {
-            throw QwenTTSError.invalidResponse
+            throw TTSError.invalidResponse
         }
-        if let code = Self.nonEmpty(decoded.code) {
-            throw QwenTTSError.service(code: code, message: decoded.message ?? "未知错误")
+        if let code = nonEmpty(decoded.code) {
+            throw TTSError.service(code: code, message: decoded.message ?? "未知错误")
         }
-        guard let value = Self.nonEmpty(decoded.output?.audio?.url) else {
-            throw QwenTTSError.missingAudio
+        guard let value = nonEmpty(decoded.output?.audio?.url) else {
+            throw TTSError.missingAudio
         }
         guard let audioURL = Self.secureAudioURL(from: value) else {
-            throw QwenTTSError.invalidAudioURL
+            throw TTSError.invalidAudioURL
         }
 
         var audioRequest = URLRequest(url: audioURL)
         audioRequest.timeoutInterval = 60
         let (audioData, audioResponse) = try await URLSession.shared.data(for: audioRequest)
         guard let audioHTTP = audioResponse as? HTTPURLResponse else {
-            throw QwenTTSError.invalidResponse
+            throw TTSError.invalidResponse
         }
         guard (200..<300).contains(audioHTTP.statusCode) else {
-            throw QwenTTSError.audioDownload(status: audioHTTP.statusCode)
+            throw TTSError.audioDownload(status: audioHTTP.statusCode)
         }
-        guard !audioData.isEmpty else { throw QwenTTSError.emptyAudio }
+        guard !audioData.isEmpty else { throw TTSError.emptyAudio }
         return audioData
     }
 
-    private func endpointURL() throws -> URL {
-        var value = config.endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-        while value.hasSuffix("/") { value.removeLast() }
-        guard !value.isEmpty else { throw QwenTTSError.invalidEndpoint }
-
-        let lower = value.lowercased()
-        if !lower.contains("/services/audio/tts/speechsynthesizer") {
-            if lower.hasSuffix("/api/v1") {
-                value += "/services/audio/tts/SpeechSynthesizer"
-            } else {
-                value += "/api/v1/services/audio/tts/SpeechSynthesizer"
-            }
-        }
-        guard let url = URL(string: value),
-              let scheme = url.scheme?.lowercased(),
-              scheme == "https" || scheme == "http",
-              url.host != nil
-        else {
-            throw QwenTTSError.invalidEndpoint
+    private func openAIEndpointURL() throws -> URL {
+        guard let url = TTSRequestPolicy.openAIEndpoint(from: backend.endpoint) else {
+            throw TTSError.invalidEndpoint
         }
         return url
     }
 
-    /// DashScope examples may return an `http` OSS URL even though the same
-    /// signed object is available over HTTPS. Upgrading it keeps playback
-    /// compatible with App Transport Security.
+    private func dashScopeEndpointURL() throws -> URL {
+        guard let url = TTSRequestPolicy.dashScopeEndpoint(from: backend.endpoint) else {
+            throw TTSError.invalidEndpoint
+        }
+        return url
+    }
+
+    private func setAuthorization(on request: inout URLRequest) {
+        if let apiKey = nonEmpty(backend.apiKey) {
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        }
+    }
+
+    private func trimmed(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func nonEmpty(_ value: String?) -> String? {
+        let value = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return value.isEmpty ? nil : value
+    }
+
+    /// DashScope examples may return an HTTP OSS URL even though the same
+    /// signed object is available over HTTPS.
     private static func secureAudioURL(from value: String) -> URL? {
         guard var components = URLComponents(string: value) else { return nil }
         if components.scheme?.lowercased() == "http",
@@ -188,17 +272,12 @@ struct QwenTTSClient {
         return [code]
     }
 
-    private static func nonEmpty(_ value: String?) -> String? {
-        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return trimmed.isEmpty ? nil : trimmed
-    }
-
-    private struct RequestBody: Encodable {
+    private struct DashScopeRequestBody: Encodable {
         let model: String
-        let input: RequestInput
+        let input: DashScopeRequestInput
     }
 
-    private struct RequestInput: Encodable {
+    private struct DashScopeRequestInput: Encodable {
         let text: String
         let voice: String
         let format: String
@@ -207,26 +286,18 @@ struct QwenTTSClient {
         let instruction: String?
 
         enum CodingKeys: String, CodingKey {
-            case text
-            case voice
-            case format
+            case text, voice, format, instruction
             case sampleRate = "sample_rate"
             case languageHints = "language_hints"
-            case instruction
         }
     }
 
-    private struct SynthesisResponse: Decodable {
+    private struct DashScopeResponse: Decodable {
         let output: Output?
         let code: String?
         let message: String?
 
-        struct Output: Decodable {
-            let audio: Audio?
-        }
-
-        struct Audio: Decodable {
-            let url: String?
-        }
+        struct Output: Decodable { let audio: Audio? }
+        struct Audio: Decodable { let url: String? }
     }
 }

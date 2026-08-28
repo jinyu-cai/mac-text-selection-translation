@@ -39,6 +39,10 @@ enum KeychainStore {
         static func backendKey(_ id: UUID) -> String {
             "backend-key-" + id.uuidString
         }
+
+        static func ttsBackendKey(_ id: UUID) -> String {
+            "tts-backend-key-" + id.uuidString
+        }
     }
 
     static func string(

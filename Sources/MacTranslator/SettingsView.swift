@@ -16,9 +16,10 @@ struct SettingsView: View {
     @State private var testOutcomes: [UUID: TestOutcome] = [:]
     @State private var dictionaryTesting = false
     @State private var dictionaryTestOutcome: TestOutcome?
-    @State private var ttsTesting = false
-    @State private var ttsTestOutcome: TestOutcome?
+    @State private var ttsTestingIDs: Set<UUID> = []
+    @State private var ttsTestOutcomes: [UUID: TestOutcome] = [:]
     @State private var dropTargetBackendID: UUID?
+    @State private var dropTargetTTSBackendID: UUID?
 
     struct TestOutcome { let ok: Bool; let message: String }
 
@@ -162,62 +163,58 @@ struct SettingsView: View {
             }
 
             Section {
-                LabeledContent("当前方式") {
-                    Label(
-                        settings.originalTextTTSConfig == nil ? "macOS 本机语音" : "Qwen AI TTS",
-                        systemImage: settings.originalTextTTSConfig == nil ? "desktopcomputer" : "waveform"
-                    )
-                    .foregroundStyle(settings.originalTextTTSConfig == nil ? Color.secondary : Color.green)
-                }
-                TextField(
-                    "Endpoint",
-                    text: $settings.qwenTTSEndpoint,
-                    prompt: Text("https://dashscope-intl.aliyuncs.com/api/v1")
-                )
-                .textFieldStyle(.roundedBorder)
-                SecretTextField(
-                    title: "API Key",
-                    text: $settings.qwenTTSAPIKey,
-                    prompt: "阿里云百炼 API Key；留空使用本机语音"
-                )
-                TextField(
-                    "模型",
-                    text: $settings.qwenTTSModel,
-                    prompt: Text("qwen-audio-3.0-tts-flash")
-                )
-                .textFieldStyle(.roundedBorder)
-                TextField(
-                    "音色",
-                    text: $settings.qwenTTSVoice,
-                    prompt: Text("loongjohn")
-                )
-                .textFieldStyle(.roundedBorder)
-                TextField(
-                    "风格指令",
-                    text: $settings.qwenTTSInstruction,
-                    prompt: Text("Speak in a natural American English accent.")
-                )
-                .textFieldStyle(.roundedBorder)
-                HStack(spacing: 8) {
-                    Button(ttsTesting ? "测试中…" : "测试 AI 朗读") {
-                        testTTS()
-                    }
-                    .disabled(ttsTesting || settings.originalTextTTSConfig == nil)
-                    if let ttsTestOutcome {
-                        Label(
-                            ttsTestOutcome.message,
-                            systemImage: ttsTestOutcome.ok ? "checkmark.circle.fill" : "xmark.circle.fill"
-                        )
-                        .foregroundStyle(ttsTestOutcome.ok ? .green : .red)
+                if settings.ttsBackends.isEmpty {
+                    Text("还没有 TTS 后端；各读音按钮将使用 macOS 本机语音。")
                         .font(.callout)
-                        .lineLimit(2)
+                        .foregroundStyle(.secondary)
+                }
+                ForEach($settings.ttsBackends) { $backend in
+                    let backendID = backend.id
+                    TTSBackendRow(
+                        backend: $backend,
+                        isTesting: ttsTestingIDs.contains(backendID),
+                        outcome: ttsTestOutcomes[backendID],
+                        canMoveUp: backendID != settings.ttsBackends.first?.id,
+                        canMoveDown: backendID != settings.ttsBackends.last?.id,
+                        onMoveUp: { settings.moveTTSBackend(id: backendID, by: -1) },
+                        onMoveDown: { settings.moveTTSBackend(id: backendID, by: 1) },
+                        dragPayload: backendID.uuidString,
+                        onTest: { testTTS(backend) },
+                        onDelete: { settings.removeTTSBackend(backend) }
+                    )
+                    .background {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(
+                                dropTargetTTSBackendID == backendID
+                                    ? Color.accentColor.opacity(0.12)
+                                    : Color.clear
+                            )
                     }
-                    Spacer()
+                    .dropDestination(for: String.self) { payloads, _ in
+                        guard let payload = payloads.first,
+                              let draggedBackendID = UUID(uuidString: payload),
+                              settings.ttsBackends.contains(where: { $0.id == draggedBackendID })
+                        else { return false }
+                        settings.moveTTSBackend(id: draggedBackendID, to: backendID)
+                        dropTargetTTSBackendID = nil
+                        return true
+                    } isTargeted: { isTargeted in
+                        if isTargeted {
+                            dropTargetTTSBackendID = backendID
+                        } else if dropTargetTTSBackendID == backendID {
+                            dropTargetTTSBackendID = nil
+                        }
+                    }
+                }
+                Button {
+                    settings.addTTSBackend()
+                } label: {
+                    Label("添加 TTS 后端", systemImage: "plus.circle")
                 }
             } header: {
-                Text("原文 AI 朗读（可选）")
+                Text("TTS 后端（可添加多个）")
             } footer: {
-                Text("API Key 留空时，原文使用 macOS 本机语音；配置完整后自动改用 AI TTS。默认使用 Flash 的美式成年男声 loongjohn；该音色不能与 Plus 模型混用。默认 Endpoint 是国际（新加坡）地域；中国内地 Key 请改为 https://dashscope.aliyuncs.com/api/v1。")
+                Text("OpenAI 兼容后端会调用 /v1/audio/speech，并直接播放返回的音频；本地服务的 API Key 可以留空。DashScope 使用 Qwen-Audio-TTS 的原生接口并需要 API Key。启用多个后，各读音按钮会显示选择菜单；全部停用时使用 macOS 本机语音。")
                     .font(.caption)
             }
 
@@ -375,26 +372,29 @@ struct SettingsView: View {
         }
     }
 
-    private func testTTS() {
-        guard let config = settings.originalTextTTSConfig else {
-            ttsTestOutcome = TestOutcome(ok: false, message: "请先完整填写 AI TTS 配置")
+    private func testTTS(_ backend: TTSBackend) {
+        guard backend.isConfigured else {
+            ttsTestOutcomes[backend.id] = TestOutcome(ok: false, message: "请先完整填写 TTS 配置")
             return
         }
-        ttsTesting = true
-        ttsTestOutcome = nil
+        ttsTestingIDs.insert(backend.id)
+        ttsTestOutcomes[backend.id] = nil
         Task {
             do {
-                let data = try await QwenTTSClient(config: config).synthesize(
+                let data = try await TTSClient(backend: backend).synthesize(
                     text: "Hello! This is a natural American English voice.",
                     language: "en-US"
                 )
                 try PronunciationSpeaker.shared.playPreview(data)
-                ttsTestOutcome = TestOutcome(ok: true, message: "合成成功，正在试听（\(data.count / 1_024) KB）")
+                ttsTestOutcomes[backend.id] = TestOutcome(
+                    ok: true,
+                    message: "合成成功，正在试听（\(data.count / 1_024) KB）"
+                )
             } catch {
                 let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-                ttsTestOutcome = TestOutcome(ok: false, message: message)
+                ttsTestOutcomes[backend.id] = TestOutcome(ok: false, message: message)
             }
-            ttsTesting = false
+            ttsTestingIDs.remove(backend.id)
         }
     }
 
@@ -541,6 +541,111 @@ private struct BackendRow: View {
                         .foregroundStyle(outcome.ok ? .green : .red)
                         .font(.callout)
                         .lineLimit(2)
+                }
+                Spacer()
+            }
+        }
+        .padding(.vertical, 4)
+        .opacity(backend.isEnabled ? 1 : 0.55)
+        .accessibilityAction(named: Text("上移")) {
+            if canMoveUp { onMoveUp() }
+        }
+        .accessibilityAction(named: Text("下移")) {
+            if canMoveDown { onMoveDown() }
+        }
+    }
+}
+
+/// Editable row for one selectable text-to-speech backend.
+private struct TTSBackendRow: View {
+    @Binding var backend: TTSBackend
+    var isTesting: Bool
+    var outcome: SettingsView.TestOutcome?
+    var canMoveUp: Bool
+    var canMoveDown: Bool
+    var onMoveUp: () -> Void
+    var onMoveDown: () -> Void
+    var dragPayload: String
+    var onTest: () -> Void
+    var onDelete: () -> Void
+
+    private var endpointPrompt: String {
+        switch backend.apiKind {
+        case .openAI: return "http://localhost:8000/v1"
+        case .dashScope: return "https://dashscope-intl.aliyuncs.com/api/v1"
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Toggle("", isOn: $backend.isEnabled)
+                    .labelsHidden()
+                    .help("启用此 TTS 后端")
+                Image(systemName: "line.3.horizontal")
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 2)
+                    .contentShape(Rectangle())
+                    .draggable(dragPayload)
+                    .help("拖动调整 TTS 后端顺序")
+                    .accessibilityLabel("拖动排序 \(backend.name)")
+                    .contextMenu {
+                        Button("上移", action: onMoveUp).disabled(!canMoveUp)
+                        Button("下移", action: onMoveDown).disabled(!canMoveDown)
+                    }
+                TextField("名称", text: $backend.name)
+                    .textFieldStyle(.roundedBorder)
+                Picker("协议", selection: $backend.apiKind) {
+                    ForEach(TTSAPIKind.allCases) { kind in
+                        Text(kind.label).tag(kind)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .fixedSize()
+                Button(role: .destructive, action: onDelete) {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.borderless)
+                .help("删除此 TTS 后端")
+            }
+
+            TextField("Base URL / Endpoint", text: $backend.endpoint, prompt: Text(endpointPrompt))
+                .textFieldStyle(.roundedBorder)
+            SecretTextField(
+                title: "API Key",
+                text: $backend.apiKey,
+                prompt: backend.apiKind == .openAI
+                    ? "sk-...（本地服务可留空）"
+                    : "阿里云百炼 API Key"
+            )
+            TextField("模型", text: $backend.model, prompt: Text("tts-1 / Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"))
+                .textFieldStyle(.roundedBorder)
+            HStack(spacing: 8) {
+                TextField("音色", text: $backend.voice, prompt: Text("alloy / Aiden"))
+                    .textFieldStyle(.roundedBorder)
+                TextField("音频格式", text: $backend.responseFormat, prompt: Text("mp3"))
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 130)
+            }
+            TextField(
+                "风格指令（可选）",
+                text: $backend.instruction,
+                prompt: Text("Speak in a natural American English accent.")
+            )
+            .textFieldStyle(.roundedBorder)
+
+            HStack(spacing: 8) {
+                Button(isTesting ? "测试中…" : "测试 AI 朗读", action: onTest)
+                    .disabled(isTesting)
+                if let outcome {
+                    Label(
+                        outcome.message,
+                        systemImage: outcome.ok ? "checkmark.circle.fill" : "xmark.circle.fill"
+                    )
+                    .foregroundStyle(outcome.ok ? .green : .red)
+                    .font(.callout)
+                    .lineLimit(2)
                 }
                 Spacer()
             }

@@ -398,8 +398,10 @@ private struct PopupView: View {
                         SpeakButton(
                             text: session.sourceText,
                             languageCode: session.sourceSpeechLanguage,
-                            help: settings.originalTextTTSConfig == nil ? "使用 macOS 语音朗读原文" : "使用 AI TTS 朗读原文",
-                            aiConfig: settings.originalTextTTSConfig
+                            help: settings.enabledTTSBackends.isEmpty
+                                ? "使用 macOS 语音朗读原文"
+                                : "选择 TTS 后端朗读原文",
+                            ttsBackends: settings.enabledTTSBackends
                         )
                     }
 
@@ -417,12 +419,17 @@ private struct PopupView: View {
                             isLoading: session.isDictionaryLoading,
                             errorMessage: session.dictionaryErrorMessage,
                             sourceLanguageCode: session.sourceSpeechLanguage,
-                            targetLanguageCode: session.targetSpeechLanguage
+                            targetLanguageCode: session.targetSpeechLanguage,
+                            ttsBackends: settings.enabledTTSBackends
                         )
                     }
 
                     ForEach(session.results) { result in
-                        ResultCard(result: result, languageCode: session.translationSpeechLanguage)
+                        ResultCard(
+                            result: result,
+                            languageCode: session.translationSpeechLanguage,
+                            ttsBackends: settings.enabledTTSBackends
+                        )
                     }
                 }
             }
@@ -437,6 +444,7 @@ private struct PopupView: View {
 private struct ResultCard: View {
     let result: TranslationSession.Result
     let languageCode: String?
+    let ttsBackends: [TTSBackend]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -451,7 +459,8 @@ private struct ResultCard: View {
                 SpeakButton(
                     text: result.output,
                     languageCode: languageCode,
-                    help: "朗读此译文"
+                    help: ttsBackends.isEmpty ? "朗读此译文" : "选择 TTS 后端朗读此译文",
+                    ttsBackends: ttsBackends
                 )
                 .disabled(result.output.isEmpty)
                 Button {
@@ -491,6 +500,7 @@ private struct DictionaryCard: View {
     let errorMessage: String?
     let sourceLanguageCode: String?
     let targetLanguageCode: String?
+    let ttsBackends: [TTSBackend]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -505,7 +515,8 @@ private struct DictionaryCard: View {
                 SpeakButton(
                     text: lookup?.displaySource ?? sourceText,
                     languageCode: sourceLanguageCode,
-                    help: "朗读词条"
+                    help: ttsBackends.isEmpty ? "朗读词条" : "选择 TTS 后端朗读词条",
+                    ttsBackends: ttsBackends
                 )
             }
 
@@ -524,7 +535,8 @@ private struct DictionaryCard: View {
                         ForEach(Array(lookup.translations.prefix(6))) { translation in
                             DictionaryTranslationRow(
                                 translation: translation,
-                                targetLanguageCode: targetLanguageCode
+                                targetLanguageCode: targetLanguageCode,
+                                ttsBackends: ttsBackends
                             )
                         }
                     }
@@ -544,6 +556,7 @@ private struct DictionaryCard: View {
 private struct DictionaryTranslationRow: View {
     let translation: MicrosoftDictionaryTranslation
     let targetLanguageCode: String?
+    let ttsBackends: [TTSBackend]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -565,7 +578,8 @@ private struct DictionaryTranslationRow: View {
                 SpeakButton(
                     text: translation.displayText,
                     languageCode: targetLanguageCode,
-                    help: "朗读译词"
+                    help: ttsBackends.isEmpty ? "朗读译词" : "选择 TTS 后端朗读译词",
+                    ttsBackends: ttsBackends
                 )
             }
 
@@ -583,7 +597,7 @@ private struct SpeakButton: View {
     let text: String
     let languageCode: String?
     let help: String
-    let aiConfig: QwenTTSConfig?
+    let ttsBackends: [TTSBackend]
 
     @ObservedObject private var speaker = PronunciationSpeaker.shared
 
@@ -591,28 +605,60 @@ private struct SpeakButton: View {
         text: String,
         languageCode: String?,
         help: String,
-        aiConfig: QwenTTSConfig? = nil
+        ttsBackends: [TTSBackend] = []
     ) {
         self.text = text
         self.languageCode = languageCode
         self.help = help
-        self.aiConfig = aiConfig
+        self.ttsBackends = ttsBackends
     }
 
+    @ViewBuilder
     var body: some View {
-        Button {
-            speaker.speak(text, language: languageCode, aiConfig: aiConfig)
-        } label: {
-            if aiConfig != nil, speaker.isPreparingAI {
-                ProgressView()
-                    .controlSize(.small)
-            } else {
-                Image(systemName: aiConfig == nil ? "speaker.wave.2" : "waveform")
+        if ttsBackends.count > 1 {
+            Menu {
+                ForEach(ttsBackends) { backend in
+                    Button(backend.name) {
+                        speaker.speak(text, language: languageCode, ttsBackend: backend)
+                    }
+                }
+                Divider()
+                Button("macOS 本机语音") {
+                    speaker.speak(text, language: languageCode)
+                }
+            } label: {
+                speechLabel(usesAI: true)
             }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .controlSize(.small)
+            .help(help)
+            .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        } else {
+            Button {
+                speaker.speak(
+                    text,
+                    language: languageCode,
+                    ttsBackend: ttsBackends.first
+                )
+            } label: {
+                speechLabel(usesAI: !ttsBackends.isEmpty)
+            }
+            .buttonStyle(.borderless)
+            .controlSize(.small)
+            .help(help)
+            .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
-        .buttonStyle(.borderless)
-        .controlSize(.small)
-        .help(help)
-        .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
+    @ViewBuilder
+    private func speechLabel(usesAI: Bool) -> some View {
+        if usesAI, speaker.isPreparingAI {
+            ProgressView()
+                .controlSize(.small)
+        } else {
+            Image(systemName: usesAI ? "waveform" : "speaker.wave.2")
+        }
     }
 }

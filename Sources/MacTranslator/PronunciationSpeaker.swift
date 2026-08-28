@@ -26,7 +26,7 @@ final class PronunciationSpeaker: ObservableObject {
     func speak(
         _ text: String,
         language: String? = nil,
-        aiConfig: QwenTTSConfig? = nil
+        ttsBackend: TTSBackend? = nil
     ) {
         let spoken = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !spoken.isEmpty else { return }
@@ -34,8 +34,8 @@ final class PronunciationSpeaker: ObservableObject {
         stop()
         errorMessage = nil
 
-        if let aiConfig {
-            speakWithAI(spoken, language: language, config: aiConfig)
+        if let ttsBackend {
+            speakWithAI(spoken, language: language, backend: ttsBackend)
             return
         }
 
@@ -73,14 +73,14 @@ final class PronunciationSpeaker: ObservableObject {
         try startAudioPlayback(data)
     }
 
-    private func speakWithAI(_ spoken: String, language: String?, config: QwenTTSConfig) {
+    private func speakWithAI(_ spoken: String, language: String?, backend: TTSBackend) {
         let requestID = UUID()
         activeRequestID = requestID
         isPreparingAI = true
 
         synthesisTask = Task { [weak self] in
             do {
-                let data = try await QwenTTSClient(config: config).synthesize(
+                let data = try await TTSClient(backend: backend).synthesize(
                     text: spoken,
                     language: language
                 )

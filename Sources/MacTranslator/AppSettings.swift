@@ -11,6 +11,10 @@ final class AppSettings: ObservableObject {
     /// All configured AI backends. Each enabled one runs on every translation.
     @Published var backends: [Backend] { didSet { saveBackends() } }
 
+    /// All configured text-to-speech backends. Enabled entries are selectable
+    /// from every speech button in this stored order.
+    @Published var ttsBackends: [TTSBackend] { didSet { saveTTSBackends() } }
+
     /// Non-persistent operational errors that need to be visible in Settings.
     @Published private(set) var credentialError: String?
     @Published var hotkeyRegistrationError: String?
@@ -31,11 +35,6 @@ final class AppSettings: ObservableObject {
     @Published var microsoftTranslatorRegion: String { didSet { defaults.set(microsoftTranslatorRegion, forKey: Keys.microsoftTranslatorRegion) } }
     @Published var microsoftDictionaryFromLanguage: String { didSet { defaults.set(microsoftDictionaryFromLanguage, forKey: Keys.microsoftDictionaryFromLanguage) } }
     @Published var microsoftDictionaryToLanguage: String { didSet { defaults.set(microsoftDictionaryToLanguage, forKey: Keys.microsoftDictionaryToLanguage) } }
-    @Published var qwenTTSEndpoint: String { didSet { defaults.set(qwenTTSEndpoint, forKey: Keys.qwenTTSEndpoint) } }
-    @Published var qwenTTSAPIKey: String { didSet { persistQwenTTSAPIKey() } }
-    @Published var qwenTTSModel: String { didSet { defaults.set(qwenTTSModel, forKey: Keys.qwenTTSModel) } }
-    @Published var qwenTTSVoice: String { didSet { defaults.set(qwenTTSVoice, forKey: Keys.qwenTTSVoice) } }
-    @Published var qwenTTSInstruction: String { didSet { defaults.set(qwenTTSInstruction, forKey: Keys.qwenTTSInstruction) } }
     @Published var hotkeyKeyCode: Int { didSet { defaults.set(hotkeyKeyCode, forKey: Keys.hotkeyKeyCode) } }
     @Published var hotkeyModifiers: Int { didSet { defaults.set(hotkeyModifiers, forKey: Keys.hotkeyModifiers) } }
     @Published var ocrHotkeyKeyCode: Int { didSet { defaults.set(ocrHotkeyKeyCode, forKey: Keys.ocrHotkeyKeyCode) } }
@@ -43,7 +42,7 @@ final class AppSettings: ObservableObject {
 
     private var backendCredentialError: String?
     private var microsoftCredentialError: String?
-    private var qwenTTSCredentialError: String?
+    private var ttsBackendCredentialError: String?
 
     private init() {
         var startupCredentialError: String?
@@ -110,19 +109,6 @@ final class AppSettings: ObservableObject {
         microsoftTranslatorRegion = defaults.string(forKey: Keys.microsoftTranslatorRegion) ?? ""
         microsoftDictionaryFromLanguage = defaults.string(forKey: Keys.microsoftDictionaryFromLanguage) ?? "en"
         microsoftDictionaryToLanguage = defaults.string(forKey: Keys.microsoftDictionaryToLanguage) ?? "zh-Hans"
-        qwenTTSEndpoint = defaults.string(forKey: Keys.qwenTTSEndpoint) ?? "https://dashscope-intl.aliyuncs.com/api/v1"
-        do {
-            qwenTTSAPIKey = try KeychainStore.string(
-                for: KeychainStore.Account.qwenTTSAPIKey,
-                interaction: .suppress
-            ) ?? ""
-        } catch {
-            qwenTTSAPIKey = ""
-            qwenTTSCredentialError = Self.credentialReadMessage("Qwen TTS API Key", error)
-        }
-        qwenTTSModel = defaults.string(forKey: Keys.qwenTTSModel) ?? "qwen-audio-3.0-tts-flash"
-        qwenTTSVoice = defaults.string(forKey: Keys.qwenTTSVoice) ?? "loongjohn"
-        qwenTTSInstruction = defaults.string(forKey: Keys.qwenTTSInstruction) ?? "Speak in a native American accent with relaxed, natural conversational delivery."
         hotkeyKeyCode = defaults.integer(forKey: Keys.hotkeyKeyCode)
         hotkeyModifiers = defaults.integer(forKey: Keys.hotkeyModifiers)
         ocrHotkeyKeyCode = defaults.integer(forKey: Keys.ocrHotkeyKeyCode)
@@ -131,6 +117,9 @@ final class AppSettings: ObservableObject {
         let loadedBackends = Self.loadBackends(from: defaults)
         backends = loadedBackends.backends
         unavailableBackendKeyIDs = loadedBackends.unavailableKeyIDs
+        let loadedTTSBackends = Self.loadTTSBackends(from: defaults)
+        ttsBackends = loadedTTSBackends.backends
+        unavailableTTSBackendKeyIDs = loadedTTSBackends.unavailableKeyIDs
         credentialError = nil
         hotkeyRegistrationError = nil
         ocrHotkeyRegistrationError = nil
@@ -141,6 +130,9 @@ final class AppSettings: ObservableObject {
         if loadedBackends.needsMigration, saveBackends(interaction: .suppress) {
             defaults.removeObject(forKey: "apiKey") // legacy single-backend key
         }
+        if loadedTTSBackends.needsMigration {
+            _ = saveTTSBackends(interaction: .suppress)
+        }
         if !unavailableBackendKeyIDs.isEmpty, backendCredentialError == nil {
             backendCredentialError = loadedBackends.readError
             refreshCredentialError()
@@ -149,7 +141,8 @@ final class AppSettings: ObservableObject {
             microsoftCredentialError = startupCredentialError
             refreshCredentialError()
         }
-        if qwenTTSCredentialError != nil {
+        if !unavailableTTSBackendKeyIDs.isEmpty, ttsBackendCredentialError == nil {
+            ttsBackendCredentialError = loadedTTSBackends.readError
             refreshCredentialError()
         }
     }
@@ -175,18 +168,9 @@ final class AppSettings: ObservableObject {
         )
     }
 
-    /// A complete config switches only the original-text button to AI TTS.
-    /// Keeping the API key empty preserves the zero-configuration system voice.
-    var originalTextTTSConfig: QwenTTSConfig? {
-        let config = QwenTTSConfig(
-            endpoint: qwenTTSEndpoint,
-            apiKey: qwenTTSAPIKey,
-            model: qwenTTSModel,
-            voice: qwenTTSVoice,
-            instruction: qwenTTSInstruction
-        )
-        return config.isConfigured ? config : nil
-    }
+    /// TTS choices shown by speech buttons. If this is empty, the app keeps
+    /// using the zero-configuration macOS system voice.
+    var enabledTTSBackends: [TTSBackend] { ttsBackends.filter { $0.isUsable } }
 
     var targetSpeechLanguageCode: String? {
         Self.speechLanguageCode(for: targetLanguage)
@@ -230,6 +214,47 @@ final class AppSettings: ObservableObject {
             refreshCredentialError()
         } catch {
             backendCredentialError = Self.credentialMessage("\(backend.name) 的 API Key", error)
+            refreshCredentialError()
+        }
+    }
+
+    // MARK: - TTS Backends
+
+    func addTTSBackend() {
+        ttsBackends.append(.makeNew())
+    }
+
+    func moveTTSBackend(id: UUID, by offset: Int) {
+        guard let sourceIndex = ttsBackends.firstIndex(where: { $0.id == id }) else { return }
+        let destinationIndex = sourceIndex + offset
+        guard ttsBackends.indices.contains(destinationIndex) else { return }
+        ttsBackends = ListOrderingPolicy.moving(
+            ttsBackends,
+            from: sourceIndex,
+            to: destinationIndex
+        )
+    }
+
+    func moveTTSBackend(id: UUID, to destinationID: UUID) {
+        guard let sourceIndex = ttsBackends.firstIndex(where: { $0.id == id }),
+              let destinationIndex = ttsBackends.firstIndex(where: { $0.id == destinationID })
+        else { return }
+        ttsBackends = ListOrderingPolicy.moving(
+            ttsBackends,
+            from: sourceIndex,
+            to: destinationIndex
+        )
+    }
+
+    func removeTTSBackend(_ backend: TTSBackend) {
+        do {
+            try KeychainStore.delete(account: KeychainStore.Account.ttsBackendKey(backend.id))
+            unavailableTTSBackendKeyIDs.remove(backend.id)
+            ttsBackends.removeAll { $0.id == backend.id }
+            ttsBackendCredentialError = nil
+            refreshCredentialError()
+        } catch {
+            ttsBackendCredentialError = Self.credentialMessage("\(backend.name) 的 API Key", error)
             refreshCredentialError()
         }
     }
@@ -327,6 +352,130 @@ final class AppSettings: ObservableObject {
         var readError: String?
     }
 
+    @discardableResult
+    private func saveTTSBackends(
+        interaction: KeychainStore.Interaction = .allow
+    ) -> Bool {
+        for backend in ttsBackends {
+            if unavailableTTSBackendKeyIDs.contains(backend.id), backend.apiKey.isEmpty {
+                continue
+            }
+            do {
+                try KeychainStore.set(
+                    backend.apiKey,
+                    for: KeychainStore.Account.ttsBackendKey(backend.id),
+                    interaction: interaction
+                )
+                unavailableTTSBackendKeyIDs.remove(backend.id)
+            } catch {
+                ttsBackendCredentialError = Self.credentialMessage("\(backend.name) 的 API Key", error)
+                refreshCredentialError()
+                return false
+            }
+        }
+
+        var sanitized = ttsBackends
+        for index in sanitized.indices {
+            sanitized[index].apiKey = ""
+        }
+        if let data = try? JSONEncoder().encode(sanitized) {
+            defaults.set(data, forKey: Keys.ttsBackends)
+            ttsBackendCredentialError = nil
+            refreshCredentialError()
+            return true
+        }
+        ttsBackendCredentialError = "TTS 后端配置编码失败，修改尚未保存。"
+        refreshCredentialError()
+        return false
+    }
+
+    /// Loads the multi-backend format, or migrates the former single Qwen TTS
+    /// configuration and Keychain item without exposing its key in UserDefaults.
+    private static func loadTTSBackends(from defaults: UserDefaults) -> LoadedTTSBackends {
+        if let data = defaults.data(forKey: Keys.ttsBackends),
+           var decoded = try? JSONDecoder().decode([TTSBackend].self, from: data) {
+            var unavailableKeyIDs: Set<UUID> = []
+            var readError: String?
+            let needsMigration = decoded.contains { !$0.apiKey.isEmpty }
+            for index in decoded.indices {
+                do {
+                    if let stored = try KeychainStore.string(
+                        for: KeychainStore.Account.ttsBackendKey(decoded[index].id),
+                        interaction: .suppress
+                    ), !stored.isEmpty {
+                        decoded[index].apiKey = stored
+                    }
+                } catch {
+                    unavailableKeyIDs.insert(decoded[index].id)
+                    if readError == nil {
+                        readError = credentialReadMessage("\(decoded[index].name) 的 API Key", error)
+                    }
+                }
+            }
+            return LoadedTTSBackends(
+                backends: decoded,
+                unavailableKeyIDs: unavailableKeyIDs,
+                needsMigration: needsMigration,
+                readError: readError
+            )
+        }
+
+        let legacyKey: String
+        var unavailableKeyIDs: Set<UUID> = []
+        var readError: String?
+        let id = UUID()
+        do {
+            legacyKey = try KeychainStore.string(
+                for: KeychainStore.Account.qwenTTSAPIKey,
+                interaction: .suppress
+            ) ?? ""
+        } catch {
+            legacyKey = ""
+            unavailableKeyIDs.insert(id)
+            readError = credentialReadMessage("Qwen TTS API Key", error)
+        }
+
+        guard !legacyKey.isEmpty || readError != nil else {
+            return LoadedTTSBackends(
+                backends: [],
+                unavailableKeyIDs: [],
+                needsMigration: true,
+                readError: nil
+            )
+        }
+
+        let migrated = TTSBackend(
+            id: id,
+            name: "Qwen AI TTS",
+            apiKind: .dashScope,
+            endpoint: defaults.string(forKey: Keys.qwenTTSEndpoint)
+                ?? "https://dashscope-intl.aliyuncs.com/api/v1",
+            apiKey: legacyKey,
+            model: defaults.string(forKey: Keys.qwenTTSModel)
+                ?? "qwen-audio-3.0-tts-flash",
+            voice: defaults.string(forKey: Keys.qwenTTSVoice) ?? "loongjohn",
+            responseFormat: "mp3",
+            instruction: defaults.string(forKey: Keys.qwenTTSInstruction)
+                ?? "Speak in a native American accent with relaxed, natural conversational delivery.",
+            isEnabled: true
+        )
+        return LoadedTTSBackends(
+            backends: [migrated],
+            unavailableKeyIDs: unavailableKeyIDs,
+            needsMigration: true,
+            readError: readError
+        )
+    }
+
+    private var unavailableTTSBackendKeyIDs: Set<UUID> = []
+
+    private struct LoadedTTSBackends {
+        var backends: [TTSBackend]
+        var unavailableKeyIDs: Set<UUID>
+        var needsMigration: Bool
+        var readError: String?
+    }
+
     private func persistMicrosoftTranslatorKey() {
         do {
             try KeychainStore.set(
@@ -341,22 +490,8 @@ final class AppSettings: ObservableObject {
         }
     }
 
-    private func persistQwenTTSAPIKey() {
-        do {
-            try KeychainStore.set(
-                qwenTTSAPIKey,
-                for: KeychainStore.Account.qwenTTSAPIKey
-            )
-            qwenTTSCredentialError = nil
-            refreshCredentialError()
-        } catch {
-            qwenTTSCredentialError = Self.credentialMessage("Qwen TTS API Key", error)
-            refreshCredentialError()
-        }
-    }
-
     private func refreshCredentialError() {
-        credentialError = qwenTTSCredentialError ?? microsoftCredentialError ?? backendCredentialError
+        credentialError = ttsBackendCredentialError ?? microsoftCredentialError ?? backendCredentialError
     }
 
     private static func credentialMessage(_ label: String, _ error: Error) -> String {
@@ -474,6 +609,7 @@ final class AppSettings: ObservableObject {
         static let qwenTTSModel = "qwenTTSModel"
         static let qwenTTSVoice = "qwenTTSVoice"
         static let qwenTTSInstruction = "qwenTTSInstruction"
+        static let ttsBackends = "ttsBackends"
         static let hotkeyKeyCode = "hotkeyKeyCode"
         static let hotkeyModifiers = "hotkeyModifiers"
         static let ocrHotkeyKeyCode = "ocrHotkeyKeyCode"
